@@ -1,6 +1,17 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+#if canImport(os)
 import os
+#else
+import Synchronization
+#endif
 import Testing
 @testable import xcflow
 
@@ -10,7 +21,11 @@ final class ScriptedProtocol: URLProtocol {
         var calls = 0
     }
 
+    #if canImport(os)
     static let state = OSAllocatedUnfairLock(initialState: State())
+    #else
+    static let state = Mutex(State())
+    #endif
 
     override class func canInit(with request: URLRequest) -> Bool {
         true

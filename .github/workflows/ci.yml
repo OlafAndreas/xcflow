@@ -7,8 +7,8 @@ on:
       - main
 
 jobs:
-  test:
-    name: Build and test
+  macos:
+    name: Build and test on macOS
     runs-on: macos-26
 
     steps:
@@ -22,3 +22,17 @@ jobs:
 
       - name: Test
         run: swift test
+
+  linux:
+    name: Build and test on Linux
+    runs-on: ubuntu-latest
+    container: swift:6.3
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test
+        run: |
+          swift --version
+          swift test
