@@ -11,6 +11,7 @@ enum RepoSetup {
         var products: [String]?
         var skipExport = false
         var skipSecrets = false
+        var replaceSecrets = false
         var repo: String?
         var checksumsFile: String?
 
@@ -23,6 +24,7 @@ enum RepoSetup {
                 case "--force": force = true
                 case "--skip-export": skipExport = true
                 case "--skip-secrets": skipSecrets = true
+                case "--replace-secrets": replaceSecrets = true
                 case "--products": products = try Self.value(argument, &rest).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 case "--repo": repo = try Self.value(argument, &rest)
                 case "--checksums": checksumsFile = try Self.value(argument, &rest)
@@ -97,13 +99,17 @@ enum RepoSetup {
         print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
 
         if options.skipSecrets {
-            todo.append("Set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo.")
+            todo.append("Make sure the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets are set on the GitHub repo. Skipped with --skip-secrets.")
         } else if options.dryRun {
-            print("Would offer to set the ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT secrets on the GitHub repo with `gh secret set`.")
-        } else if prompt.ask("Set the ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT secrets on this repo's GitHub repository, from a team API key?") {
-            try setSecrets(in: root, prompt: prompt)
+            print("Would check the repo's GitHub secrets, and offer to set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT if any are missing.")
         } else {
-            todo.append("Set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key (base64 of the .p8 for the content).")
+            let decision = SecretsDecision(existing: existingSecretNames(in: root), replace: options.replaceSecrets)
+            print(decision.message)
+            if let question = decision.question, prompt.ask(question) {
+                try setSecrets(in: root, prompt: prompt)
+            } else if decision.question != nil {
+                todo.append("Set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key (base64 of the .p8 for the content).")
+            }
         }
 
         todo.append("Check that the team key's role can edit Xcode Cloud workflows: Admin, or App Manager with Xcode Cloud access.")
@@ -208,6 +214,44 @@ enum RepoSetup {
             checksums[String(parts[1].trimmingPrefix("*"))] = String(parts[0])
         }
         return checksums
+    }
+
+    static let secretNames = ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_CONTENT"]
+
+    struct SecretsDecision: Equatable {
+        let message: String
+        let question: String?
+
+        init(existing: Result<Set<String>, Error>, replace: Bool) {
+            let all = RepoSetup.secretNames.joined(separator: ", ")
+            switch existing {
+            case .failure(let error):
+                message = "Couldn't read the repo's GitHub secrets: \(error.localizedDescription)"
+                question = "Set \(all) on this repo's GitHub repository, from a team API key?"
+            case .success(let names):
+                let missing = RepoSetup.secretNames.filter { !names.contains($0) }
+                if missing.isEmpty, replace {
+                    message = "\(all) are already set on the GitHub repo."
+                    question = "Replace all three, from a team API key?"
+                } else if missing.isEmpty {
+                    message = "\(all) are already set on the GitHub repo. Skipping. Pass --replace-secrets to set them again."
+                    question = nil
+                } else if missing.count == RepoSetup.secretNames.count {
+                    message = "None of \(all) are set on the GitHub repo."
+                    question = "Set them, from a team API key?"
+                } else {
+                    message = "\(missing.joined(separator: ", ")) \(missing.count == 1 ? "is" : "are") missing on the GitHub repo. All three have to come from the same key."
+                    question = "Set all three, from a team API key?"
+                }
+            }
+        }
+    }
+
+    private static func existingSecretNames(in root: URL) -> Result<Set<String>, Error> {
+        Result {
+            let output = try run(["gh", "secret", "list", "--json", "name", "--jq", ".[].name"], in: root)
+            return Set(output.split(whereSeparator: \.isNewline).map(String.init))
+        }
     }
 
     private static func setSecrets(in root: URL, prompt: Prompt) throws {

@@ -46,7 +46,7 @@ Homebrew installs the macOS build. Each release also has Linux builds for x86_64
    - `.github/workflows/xcflow-plan.yml`, `xcflow-apply.yml` and `xcflow-sync.yml`, running on `ubuntu-latest`, and `.github/actions/xcflow/`, which installs a pinned xcflow release on the runner and checks its checksum.
    - `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files.
    - An `xcflow` entry in `.mcp.json`.
-   - Optionally, the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key. The key's role must be allowed to edit Xcode Cloud workflows: Admin, or App Manager with Xcode Cloud access.
+   - Optionally, the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key. `setup` checks first and skips this step when all three are already set; `--replace-secrets` sets them again. The key's role must be allowed to edit Xcode Cloud workflows: Admin, or App Manager with Xcode Cloud access.
 
    Run it again at any time; files that already match are left alone.
 
