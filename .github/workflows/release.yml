@@ -60,7 +60,6 @@ jobs:
             sha256 "${SHA}"
             license "MIT"
 
-            depends_on :macos
             depends_on macos: :sonoma
 
             def install
