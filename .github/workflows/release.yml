@@ -167,7 +167,15 @@ jobs:
           if grep -q "Add the release checksums" setup.txt; then echo "::error::setup didn't find the release checksums."; exit 1; fi
 
       - name: Install xcflow with the generated action
+        if: runner.os == 'Linux'
         uses: ./smoke/.github/actions/xcflow
+
+      # The generated action is Linux-only. On macOS, check the archive that Homebrew installs instead.
+      - name: Use the macOS archive
+        if: runner.os == 'macOS'
+        run: |
+          echo "$RUNNER_TEMP/bootstrap" >> "$GITHUB_PATH"
+          if grep -q "macOS" smoke/.github/actions/xcflow/action.yml; then echo "::error::The generated install action mentions macOS."; exit 1; fi
 
       - name: Run xcflow from the install
         run: |

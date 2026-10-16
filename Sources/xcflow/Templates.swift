@@ -6,7 +6,6 @@ enum Templates {
 
     static func archives(version: String) -> [String: String] {
         [
-            "macos": "xcflow-\(version).tar.gz",
             "linux-x86_64": "xcflow-\(version)-linux-x86_64.tar.gz",
             "linux-aarch64": "xcflow-\(version)-linux-aarch64.tar.gz"
         ]
@@ -36,7 +35,7 @@ enum Templates {
 
     private static let installAction = #"""
     name: Install xcflow
-    description: Installs the pinned xcflow release, which plans and applies the Xcode Cloud workflows in XcodeCloud/.
+    description: Installs the pinned xcflow release on a Linux runner. xcflow plans and applies the Xcode Cloud workflows in XcodeCloud/.
 
     runs:
       using: composite
@@ -45,10 +44,9 @@ enum Templates {
           shell: bash
           run: |
             case "$RUNNER_OS-$RUNNER_ARCH" in
-              macOS-*) NAME="{{archive-macos}}"; SUM="{{checksum-macos}}" ;;
               Linux-X64) NAME="{{archive-linux-x86_64}}"; SUM="{{checksum-linux-x86_64}}" ;;
               Linux-ARM64) NAME="{{archive-linux-aarch64}}"; SUM="{{checksum-linux-aarch64}}" ;;
-              *) echo "::error::xcflow has no build for $RUNNER_OS $RUNNER_ARCH."; exit 1 ;;
+              *) echo "::error::This action installs xcflow on Linux runners only, not on $RUNNER_OS $RUNNER_ARCH. Use runs-on: ubuntu-latest."; exit 1 ;;
             esac
             ARCHIVE="$RUNNER_TEMP/xcflow.tar.gz"
             curl -fsSL -o "$ARCHIVE" "https://github.com/OlafAndreas/xcflow/releases/download/v{{version}}/$NAME"
