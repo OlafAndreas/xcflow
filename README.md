@@ -10,7 +10,7 @@
   <a href="https://github.com/OlafAndreas/xcflow/releases/latest"><img src="https://img.shields.io/github/v/release/OlafAndreas/xcflow?color=6B4FB3&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2F5F9E.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/Swift-6.3%2B-1B8A8F.svg" alt="Swift 6.3+">
-  <img src="https://img.shields.io/badge/platforms-macOS-2F5F9E.svg" alt="macOS">
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-2F5F9E.svg" alt="macOS, Linux">
 </p>
 
 Xcode Cloud workflows as JSON files in your repo. Review workflow changes in pull requests, apply them when they merge, and get a pull request when someone changes a workflow by hand in App Store Connect.
@@ -22,6 +22,8 @@ xcflow is a command-line tool and an MCP server for the App Store Connect API. I
 ```bash
 brew install olafandreas/tap/xcflow
 ```
+
+Homebrew installs the macOS build. Each release also has Linux builds for x86_64 and arm64, with the Swift runtime linked in. The GitHub Actions that `setup` adds run on `ubuntu-latest` and download the right one, so CI needs no macOS runners.
 
 ## Set up a repo
 
@@ -41,7 +43,7 @@ brew install olafandreas/tap/xcflow
    `setup` asks before each step that calls App Store Connect or GitHub, and never overwrites a changed file without asking. It adds:
 
    - `XcodeCloud/<bundle id>/*.json`: one file per workflow, exported from the products you pick, plus a README on the format.
-   - `.github/workflows/xcflow-plan.yml`, `xcflow-apply.yml` and `xcflow-sync.yml`, and `.github/actions/xcflow/`, which installs a pinned xcflow release on the runner.
+   - `.github/workflows/xcflow-plan.yml`, `xcflow-apply.yml` and `xcflow-sync.yml`, running on `ubuntu-latest`, and `.github/actions/xcflow/`, which installs a pinned xcflow release on the runner and checks its checksum.
    - `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files.
    - An `xcflow` entry in `.mcp.json`.
    - Optionally, the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key. The key's role must be allowed to edit Xcode Cloud workflows: Admin, or App Manager with Xcode Cloud access.
@@ -69,7 +71,7 @@ Only products with a folder in `XcodeCloud/` are managed. Deleting a workflow's 
 
 `--dry-run <folder>` with `plan`, `apply` or `export` answers from the workflow files in that folder instead of the API, and prints every request it would send. Nothing is sent and no key is needed. Copy `XcodeCloud/` before editing and pass the copy to see exactly what a change would do.
 
-In CI, the key comes from the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 of the `.p8`) environment variables instead of the Keychain. Reads that App Store Connect fails with a 5xx or 429 are retried; writes never are.
+In CI, the key comes from the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 of the `.p8`) environment variables instead of the Keychain. On Linux, which has no Keychain, the environment variables are the only way. Reads that App Store Connect fails with a 5xx or 429 are retried; writes never are.
 
 ## MCP server
 

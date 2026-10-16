@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 extension XcodeCloudTools {
     private static let maxLinesPerAction = 60
@@ -52,15 +55,20 @@ extension XcodeCloudTools {
         let archive = folder.appendingPathExtension("zip")
         try await client.download(url, to: archive)
 
-        let ditto = Process()
-        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        ditto.arguments = ["-x", "-k", archive.path, folder.path]
-        try ditto.run()
-        ditto.waitUntilExit()
+        let unpack = Process()
+        #if os(macOS)
+        unpack.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        unpack.arguments = ["-x", "-k", archive.path, folder.path]
+        #else
+        unpack.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        unpack.arguments = ["-q", archive.path, "-d", folder.path]
+        #endif
+        try unpack.run()
+        unpack.waitUntilExit()
         try? fileManager.removeItem(at: archive)
-        guard ditto.terminationStatus == 0 else {
+        guard unpack.terminationStatus == 0 else {
             try? fileManager.removeItem(at: folder)
-            throw ToolError.refused("Could not unpack the log bundle (ditto exited with \(ditto.terminationStatus)).")
+            throw ToolError.refused("Could not unpack the log bundle (\(unpack.executableURL?.lastPathComponent ?? "unpacking") exited with \(unpack.terminationStatus)).")
         }
     }
 

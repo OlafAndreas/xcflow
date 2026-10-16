@@ -1,0 +1,53 @@
+{
+  "attributes" : {
+    "actions" : [
+      {
+        "actionType" : "TEST",
+        "isRequiredToPass" : true,
+        "name" : "Test - iOS",
+        "platform" : "IOS",
+        "scheme" : "Example",
+        "testConfiguration" : {
+          "kind" : "USE_SCHEME_SETTINGS",
+          "testDestinations" : [
+            {
+              "deviceTypeIdentifier" : "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+              "kind" : "SIMULATOR",
+              "runtimeIdentifier" : "default"
+            }
+          ]
+        }
+      }
+    ],
+    "branchStartCondition" : null,
+    "clean" : true,
+    "containerFilePath" : "Example.xcodeproj",
+    "description" : "Release smoke test fixture",
+    "isEnabled" : true,
+    "name" : "Nightly tests",
+    "scheduledStartCondition" : {
+      "schedule" : {
+        "days" : [
+
+        ],
+        "frequency" : "DAILY",
+        "hour" : 5,
+        "minute" : 0,
+        "timezone" : "Europe/Oslo"
+      },
+      "source" : {
+        "isAllMatch" : false,
+        "patterns" : [
+          {
+            "isPrefix" : false,
+            "pattern" : "main"
+          }
+        ]
+      }
+    }
+  },
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "macOsVersion" : "Latest Release",
+  "repository" : "example-app",
+  "xcodeVersion" : "Latest Release"
+}

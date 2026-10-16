@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Security)
 import Security
+#endif
 
 struct Credentials: Sendable {
     let keyID: String
@@ -28,6 +30,7 @@ enum CredentialStore {
         return Credentials(keyID: keyID, privateKeyPEM: pem, issuerID: environment["ASC_ISSUER_ID"])
     }
 
+    #if canImport(Security)
     static func save(_ credentials: Credentials) throws {
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -71,11 +74,21 @@ enum CredentialStore {
         }
         return Credentials(keyID: keyID, privateKeyPEM: pem)
     }
+    #else
+    static func save(_ credentials: Credentials) throws {
+        throw CredentialError.noKeychain
+    }
+
+    private static func fromKeychain() throws -> Credentials {
+        throw CredentialError.noKeychain
+    }
+    #endif
 }
 
 enum CredentialError: LocalizedError {
     case missing
-    case keychain(OSStatus)
+    case keychain(Int32)
+    case noKeychain
     case environment(String)
 
     var errorDescription: String? {
@@ -84,8 +97,20 @@ enum CredentialError: LocalizedError {
             "No App Store Connect API key found. Run `xcflow auth --key-id <KEY_ID> --p8 <path/to/AuthKey.p8>`."
         case .environment(let message):
             message
+        case .noKeychain:
+            "There is no Keychain on this platform. Set the ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT environment variables instead."
         case .keychain(let status):
-            "Keychain error \(status): \(SecCopyErrorMessageString(status, nil) as String? ?? "unknown")"
+            "Keychain error \(status): \(Self.message(for: status))"
         }
+    }
+}
+
+private extension CredentialError {
+    static func message(for status: Int32) -> String {
+        #if canImport(Security)
+        SecCopyErrorMessageString(status, nil) as String? ?? "unknown"
+        #else
+        "unknown"
+        #endif
     }
 }

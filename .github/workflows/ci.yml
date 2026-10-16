@@ -7,8 +7,8 @@ on:
       - main
 
 jobs:
-  test:
-    name: Build and test
+  macos:
+    name: Build and test on macOS
     runs-on: macos-26
 
     steps:
@@ -22,3 +22,29 @@ jobs:
 
       - name: Test
         run: swift test
+
+  linux:
+    name: Build and test on Linux ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.3-jammy
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test
+        run: |
+          swift --version
+          swift test
+
+      - name: Build the release binary
+        run: |
+          swift build -c release --static-swift-stdlib
+          "$(swift build -c release --static-swift-stdlib --show-bin-path)/xcflow" --version
