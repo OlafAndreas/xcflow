@@ -1,4 +1,17 @@
-# xcflow
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="Assets/wordmark-dark.svg">
+    <img src="Assets/wordmark.svg" alt="xcflow" width="440">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://github.com/OlafAndreas/xcflow/actions/workflows/ci.yml"><img src="https://github.com/OlafAndreas/xcflow/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/OlafAndreas/xcflow/releases/latest"><img src="https://img.shields.io/github/v/release/OlafAndreas/xcflow?color=6B4FB3&label=release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2F5F9E.svg" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Swift-6.3%2B-1B8A8F.svg" alt="Swift 6.3+">
+  <img src="https://img.shields.io/badge/platforms-macOS-2F5F9E.svg" alt="macOS">
+</p>
 
 Xcode Cloud workflows as JSON files in your repo. Review workflow changes in pull requests, apply them when they merge, and get a pull request when someone changes a workflow by hand in App Store Connect.
 
