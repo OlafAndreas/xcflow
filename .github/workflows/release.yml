@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish the release
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check the version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          grep -q "static let current = \"$VERSION\"" Sources/xcflow/Version.swift || { echo "::error::Tag $GITHUB_REF_NAME doesn't match Version.current in Sources/xcflow/Version.swift."; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      - name: Test
+        run: swift test
+
+      - name: Build a universal binary
+        run: |
+          swift build -c release --arch arm64 --arch x86_64
+          BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/xcflow"
+          lipo -archs "$BIN"
+          mkdir -p dist/archive
+          cp "$BIN" LICENSE README.md dist/archive/
+          tar -czf "dist/xcflow-$VERSION.tar.gz" -C dist/archive .
+          (cd dist && shasum -a 256 "xcflow-$VERSION.tar.gz" > "xcflow-$VERSION.tar.gz.sha256")
+          cat "dist/xcflow-$VERSION.tar.gz.sha256"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "dist/xcflow-$VERSION.tar.gz" "dist/xcflow-$VERSION.tar.gz.sha256" --title "xcflow $VERSION" --generate-notes
+
+      - name: Update the Homebrew formula
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          SHA=$(cut -d ' ' -f 1 "dist/xcflow-$VERSION.tar.gz.sha256")
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/OlafAndreas/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cat > tap/Formula/xcflow.rb <<RUBY
+          class Xcflow < Formula
+            desc "Xcode Cloud workflows as JSON files in your repo"
+            homepage "https://github.com/OlafAndreas/xcflow"
+            url "https://github.com/OlafAndreas/xcflow/releases/download/v${VERSION}/xcflow-${VERSION}.tar.gz"
+            sha256 "${SHA}"
+            license "MIT"
+
+            depends_on :macos
+            depends_on macos: :sonoma
+
+            def install
+              bin.install "xcflow"
+            end
+
+            test do
+              assert_equal version.to_s, shell_output("#{bin}/xcflow --version").strip
+            end
+          end
+          RUBY
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/xcflow.rb
+          git commit -m "xcflow ${VERSION}"
+          git push
