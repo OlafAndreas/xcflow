@@ -2,7 +2,7 @@ import Foundation
 import MCP
 
 actor AppSelection {
-    private static let file = URL.applicationSupportDirectory.appending(path: "xcflow/apps.json")
+    private static let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "xcflow/apps.json")
 
     private let server: Server
     private var supportsElicitation = false

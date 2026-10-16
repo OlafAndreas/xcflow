@@ -4,11 +4,21 @@ enum Templates {
         let content: String
     }
 
-    static func files(version: String, checksum: String?) -> [File] {
-        let checksumLine = checksum.map { "        echo \"\($0)  $ARCHIVE\" | shasum -a 256 -c -\n" } ?? ""
-        let install = installAction
-            .replacingOccurrences(of: "{{version}}", with: version)
-            .replacingOccurrences(of: "{{checksum}}\n", with: checksumLine)
+    static func archives(version: String) -> [String: String] {
+        [
+            "macos": "xcflow-\(version).tar.gz",
+            "linux-x86_64": "xcflow-\(version)-linux-x86_64.tar.gz",
+            "linux-aarch64": "xcflow-\(version)-linux-aarch64.tar.gz"
+        ]
+    }
+
+    static func files(version: String, checksums: [String: String]) -> [File] {
+        var install = installAction.replacingOccurrences(of: "{{version}}", with: version)
+        for (platform, archive) in archives(version: version) {
+            install = install
+                .replacingOccurrences(of: "{{archive-\(platform)}}", with: archive)
+                .replacingOccurrences(of: "{{checksum-\(platform)}}", with: checksums[archive] ?? "")
+        }
         return [
             File(path: ".github/actions/xcflow/action.yml", content: install),
             File(path: ".github/workflows/xcflow-plan.yml", content: planWorkflow),
@@ -34,9 +44,17 @@ enum Templates {
         - name: Install xcflow {{version}}
           shell: bash
           run: |
+            case "$RUNNER_OS-$RUNNER_ARCH" in
+              macOS-*) NAME="{{archive-macos}}"; SUM="{{checksum-macos}}" ;;
+              Linux-X64) NAME="{{archive-linux-x86_64}}"; SUM="{{checksum-linux-x86_64}}" ;;
+              Linux-ARM64) NAME="{{archive-linux-aarch64}}"; SUM="{{checksum-linux-aarch64}}" ;;
+              *) echo "::error::xcflow has no build for $RUNNER_OS $RUNNER_ARCH."; exit 1 ;;
+            esac
             ARCHIVE="$RUNNER_TEMP/xcflow.tar.gz"
-            curl -fsSL -o "$ARCHIVE" "https://github.com/OlafAndreas/xcflow/releases/download/v{{version}}/xcflow-{{version}}.tar.gz"
-    {{checksum}}
+            curl -fsSL -o "$ARCHIVE" "https://github.com/OlafAndreas/xcflow/releases/download/v{{version}}/$NAME"
+            if [ -n "$SUM" ]; then
+              echo "$SUM  $ARCHIVE" | shasum -a 256 -c -
+            fi
             mkdir -p "$RUNNER_TEMP/xcflow"
             tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP/xcflow"
             echo "$RUNNER_TEMP/xcflow" >> "$GITHUB_PATH"
@@ -67,7 +85,7 @@ enum Templates {
       plan:
         name: Plan Xcode Cloud workflow changes
         if: github.event.pull_request.draft == false
-        runs-on: macos-latest
+        runs-on: ubuntu-latest
 
         steps:
           - name: Checkout repository
@@ -141,7 +159,7 @@ enum Templates {
       apply:
         name: Apply Xcode Cloud workflow changes
         if: github.ref_name == github.event.repository.default_branch
-        runs-on: macos-latest
+        runs-on: ubuntu-latest
 
         steps:
           - name: Checkout repository
@@ -188,7 +206,7 @@ enum Templates {
     jobs:
       sync:
         name: Sync Xcode Cloud workflows to the repo
-        runs-on: macos-latest
+        runs-on: ubuntu-latest
 
         steps:
           - name: Checkout repository
