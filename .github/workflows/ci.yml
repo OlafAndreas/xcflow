@@ -24,9 +24,16 @@ jobs:
         run: swift test
 
   linux:
-    name: Build and test on Linux
-    runs-on: ubuntu-latest
-    container: swift:6.3
+    name: Build and test on Linux ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.3-jammy
 
     steps:
       - name: Checkout repository
@@ -36,3 +43,8 @@ jobs:
         run: |
           swift --version
           swift test
+
+      - name: Build the release binary
+        run: |
+          swift build -c release --static-swift-stdlib
+          "$(swift build -c release --static-swift-stdlib --show-bin-path)/xcflow" --version

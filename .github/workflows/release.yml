@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and publish the release
+  macos:
+    name: Build for macOS
     runs-on: macos-26
 
     steps:
@@ -21,7 +21,6 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           grep -q "static let current = \"$VERSION\"" Sources/xcflow/Version.swift || { echo "::error::Tag $GITHUB_REF_NAME doesn't match Version.current in Sources/xcflow/Version.swift."; exit 1; }
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.6.app
@@ -31,24 +30,84 @@ jobs:
 
       - name: Build a universal binary
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           swift build -c release --arch arm64 --arch x86_64
           BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/xcflow"
           lipo -archs "$BIN"
-          mkdir -p dist/archive
-          cp "$BIN" LICENSE README.md dist/archive/
-          tar -czf "dist/xcflow-$VERSION.tar.gz" -C dist/archive .
-          (cd dist && shasum -a 256 "xcflow-$VERSION.tar.gz" > "xcflow-$VERSION.tar.gz.sha256")
-          cat "dist/xcflow-$VERSION.tar.gz.sha256"
+          mkdir -p archive dist
+          cp "$BIN" LICENSE README.md archive/
+          tar -czf "dist/xcflow-$VERSION.tar.gz" -C archive .
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/
+
+  linux:
+    name: Build for Linux ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.3-jammy
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test
+        run: swift test
+
+      - name: Build a binary with the Swift runtime linked in
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          swift build -c release --static-swift-stdlib
+          BIN="$(swift build -c release --static-swift-stdlib --show-bin-path)/xcflow"
+          "$BIN" --version
+          mkdir -p archive dist
+          cp "$BIN" LICENSE README.md archive/
+          tar -czf "dist/xcflow-$VERSION-linux-${{ matrix.arch }}.tar.gz" -C archive .
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/
+
+  publish:
+    name: Publish the release
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download the archives
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          cd dist
+          sha256sum xcflow-*.tar.gz > checksums.txt
+          for ARCHIVE in xcflow-*.tar.gz; do sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"; done
+          cat checksums.txt
 
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "dist/xcflow-$VERSION.tar.gz" "dist/xcflow-$VERSION.tar.gz.sha256" --title "xcflow $VERSION" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "xcflow ${GITHUB_REF_NAME#v}" --generate-notes
 
       - name: Update the Homebrew formula
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           SHA=$(cut -d ' ' -f 1 "dist/xcflow-$VERSION.tar.gz.sha256")
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/OlafAndreas/homebrew-tap.git" tap
           mkdir -p tap/Formula
@@ -77,3 +136,41 @@ jobs:
           git add Formula/xcflow.rb
           git commit -m "xcflow ${VERSION}"
           git push
+
+  verify:
+    name: Verify the release on ${{ matrix.runner }}
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up a repo with the released xcflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            macOS-*) NAME="xcflow-$VERSION.tar.gz" ;;
+            Linux-X64) NAME="xcflow-$VERSION-linux-x86_64.tar.gz" ;;
+            Linux-ARM64) NAME="xcflow-$VERSION-linux-aarch64.tar.gz" ;;
+          esac
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" --dir "$RUNNER_TEMP/bootstrap"
+          tar -xzf "$RUNNER_TEMP/bootstrap/$NAME" -C "$RUNNER_TEMP/bootstrap"
+          mkdir smoke
+          "$RUNNER_TEMP/bootstrap/xcflow" setup --repo smoke --products com.example.app --skip-export --skip-secrets | tee setup.txt
+          if grep -q "Add the release checksums" setup.txt; then echo "::error::setup didn't find the release checksums."; exit 1; fi
+
+      - name: Install xcflow with the generated action
+        uses: ./smoke/.github/actions/xcflow
+
+      - name: Run xcflow from the install
+        run: |
+          test "$(xcflow --version)" = "${GITHUB_REF_NAME#v}"
+          xcflow plan --root Tests/Fixtures/Smoke/XcodeCloud --dry-run Tests/Fixtures/Smoke/XcodeCloud | tee plan.md
+          grep -q "0 to create, 0 to update, 0 to delete, 1 unchanged." plan.md

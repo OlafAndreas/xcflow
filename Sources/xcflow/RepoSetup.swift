@@ -12,7 +12,7 @@ enum RepoSetup {
         var skipExport = false
         var skipSecrets = false
         var repo: String?
-        var checksum: String?
+        var checksumsFile: String?
 
         init(arguments: [String]) throws {
             var rest = arguments[...]
@@ -25,7 +25,7 @@ enum RepoSetup {
                 case "--skip-secrets": skipSecrets = true
                 case "--products": products = try Self.value(argument, &rest).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 case "--repo": repo = try Self.value(argument, &rest)
-                case "--checksum": checksum = try Self.value(argument, &rest)
+                case "--checksums": checksumsFile = try Self.value(argument, &rest)
                 default: throw ToolError.refused("Unknown option \(argument). Run `xcflow help` for the options.")
                 }
             }
@@ -81,14 +81,16 @@ enum RepoSetup {
             print("XcodeCloud/ already has \(products.joined(separator: ", ")). Leaving those files as they are.")
         }
 
-        var checksum = options.checksum
-        if checksum == nil, !options.dryRun {
-            checksum = await releaseChecksum(version: Version.current)
+        var checksumsText = try options.checksumsFile.map { try String(contentsOf: URL(filePath: $0), encoding: .utf8) }
+        if checksumsText == nil, !options.dryRun {
+            checksumsText = await releaseChecksums(version: Version.current)
         }
-        if checksum == nil {
-            todo.append("Add the release checksum to `.github/actions/xcflow/action.yml`, so CI verifies the download.")
+        let checksums = checksumsText.map(parseChecksums) ?? [:]
+        let unverified = Templates.archives(version: Version.current).values.filter { checksums[$0] == nil }.sorted()
+        if !unverified.isEmpty {
+            todo.append("Add the release checksums to `.github/actions/xcflow/action.yml`, so CI verifies the download. Missing: \(unverified.joined(separator: ", ")).")
         }
-        for file in Templates.files(version: Version.current, checksum: checksum) {
+        for file in Templates.files(version: Version.current, checksums: checksums) {
             let status = try write(file, in: root, force: options.force, dryRun: options.dryRun, prompt: prompt)
             print(describe(file.path, status, dryRun: options.dryRun))
         }
@@ -185,16 +187,27 @@ enum RepoSetup {
 
     // MARK: - Outside services
 
-    private static func releaseChecksum(version: String) async -> String? {
+    private static func releaseChecksums(version: String) async -> String? {
         guard !version.contains("-"),
-              let url = URL(string: "https://github.com/OlafAndreas/xcflow/releases/download/v\(version)/xcflow-\(version).tar.gz.sha256"),
+              let url = URL(string: "https://github.com/OlafAndreas/xcflow/releases/download/v\(version)/checksums.txt"),
               let (data, response) = try? await URLSession.shared.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200
         else {
             return nil
         }
-        let checksum = String(decoding: data, as: UTF8.self).split(separator: " ").first.map(String.init) ?? ""
-        return checksum.count == 64 ? checksum : nil
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func parseChecksums(_ text: String) -> [String: String] {
+        var checksums: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count == 2, parts[0].count == 64 else {
+                continue
+            }
+            checksums[String(parts[1].trimmingPrefix("*"))] = String(parts[0])
+        }
+        return checksums
     }
 
     private static func setSecrets(in root: URL, prompt: Prompt) throws {
