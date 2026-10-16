@@ -264,6 +264,7 @@ enum Templates {
     - `xcodeVersion` and `macOsVersion` are version names as Xcode Cloud shows them, e.g. "Xcode 26.6" or "Latest Release". `plan` lists the available names when one is unknown. `null` keeps whatever the workflow has, which is only allowed for existing workflows.
     - `attributes` uses App Store Connect's own keys and shapes. Copying from an existing file is the easiest way to get them right.
     - Test destinations name their device and runtime by `deviceTypeIdentifier` and `runtimeIdentifier` only. Xcode Cloud's display labels for them go stale, so xcflow leaves them out and ignores them.
+    - In a start condition's `filesAndFoldersRule`, App Store Connect stores an unset matcher `directory` as `""`, while an unset `fileExtension` or `fileName` stays `null`. xcflow treats a `null` directory as `""`, so either works, but `""` matches what `export` writes.
     - Renaming a workflow is a change to `attributes.name`. Keep the `id` so its build history stays.
     - Deleting a file deletes the workflow, together with its build history.
 

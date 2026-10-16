@@ -38,7 +38,8 @@ struct WorkflowSyncTests {
         let (plan, server) = try await plan(desired: desired, snapshot: snapshot)
         #expect(plan.errors.isEmpty)
         #expect(plan.markdown.contains("1 to create, 1 to update, 1 to delete, 0 unchanged."))
-        #expect(plan.markdown.contains(#""timezone":"Europe/Oslo""#))
+        #expect(plan.markdown.contains("- `scheduledStartCondition.schedule.hour`: `5` → `6`"))
+        #expect(!plan.markdown.contains("before: {"))
 
         let sync = WorkflowSync(client: AppStoreConnectClient(dryRun: server), root: desired)
         var report: [String] = []
@@ -77,6 +78,55 @@ struct WorkflowSyncTests {
         let nightly = try String(contentsOf: repo.appending(path: "com.example.app/nightly-tests.json"), encoding: .utf8)
         #expect(nightly.contains(#""hour" : 3"#))
         #expect(await server.log.allSatisfy { $0.hasPrefix("GET") })
+    }
+
+    private func withFileRule(_ workflow: JSON, directory: Any) -> JSON {
+        var workflow = workflow
+        var attributes = workflow["attributes"] as? JSON ?? [:]
+        attributes["branchStartCondition"] = [
+            "autoCancel": true,
+            "source": ["isAllMatch": true, "patterns": [JSON]()] as JSON,
+            "filesAndFoldersRule": [
+                "mode": "DO_NOT_START_IF_ALL_FILES_MATCH",
+                "matchers": [
+                    ["directory": directory, "fileExtension": "md", "fileName": NSNull()] as JSON,
+                    ["directory": "docs", "fileExtension": NSNull(), "fileName": NSNull()] as JSON
+                ]
+            ] as JSON
+        ] as JSON
+        workflow["attributes"] = attributes
+        return workflow
+    }
+
+    @Test func unsetMatcherDirectoryMatchesTheAPIsEmptyString() throws {
+        let live = try WorkflowDefinition(fileJSON: withFileRule(Fixtures.workflow(id: Fixtures.nightlyID, name: "Nightly tests"), directory: ""))
+        let file = try WorkflowDefinition(fileJSON: withFileRule(Fixtures.workflow(id: Fixtures.nightlyID, name: "Nightly tests"), directory: NSNull()))
+        #expect(WorkflowSync.changedAttributes(from: live.attributes, to: file.attributes).isEmpty)
+    }
+
+    @Test func unsetMatcherDirectoryIsSentAsEmptyString() async throws {
+        let snapshot = try Fixtures.standard()
+        let desired = try Fixtures.makeFolder([
+            "com.example.app/nightly-tests.json": Fixtures.workflow(id: Fixtures.nightlyID, name: "Nightly tests"),
+            "com.example.app/release.json": Fixtures.workflow(id: Fixtures.releaseID, name: "Release"),
+            "com.example.app/docs.json": withFileRule(Fixtures.workflow(id: nil, name: "Docs"), directory: NSNull())
+        ])
+        let (plan, server) = try await plan(desired: desired, snapshot: snapshot)
+        try await WorkflowSync(client: AppStoreConnectClient(dryRun: server), root: desired).apply(plan) { _ in }
+        let post = await server.log.first { $0.hasPrefix("POST") } ?? ""
+        #expect(post.contains(#""directory" : """#))
+        #expect(!post.contains(#""directory" : null"#))
+    }
+
+    @Test func differencesNameTheChangedKeys() {
+        let before: JSON = ["schedule": ["hour": 5, "minute": 0] as JSON, "matchers": [["directory": "a"], ["directory": "b"]]]
+        let after: JSON = ["schedule": ["hour": 6, "minute": 0] as JSON, "matchers": [["directory": "a"], ["directory": "c"]]]
+        #expect(WorkflowSync.differences(before, after, path: "condition") == [
+            .init(path: "condition.matchers[1].directory", before: #""b""#, after: #""c""#),
+            .init(path: "condition.schedule.hour", before: "5", after: "6")
+        ])
+        let grown = WorkflowSync.differences(["a"], ["a", "b"], path: "list")
+        #expect(grown == [.init(path: "list", before: #"["a"]"#, after: #"["a","b"]"#)])
     }
 
     @Test func slugs() {

@@ -26,7 +26,7 @@ struct WorkflowDefinition {
         self.repository = repository
         self.xcodeVersion = xcodeVersion
         self.macOsVersion = macOsVersion
-        self.attributes = Self.withoutDisplayLabels(attributes.filter { !Self.readOnlyAttributes.contains($0.key) })
+        self.attributes = Self.withNormalizedMatchers(Self.withoutDisplayLabels(attributes.filter { !Self.readOnlyAttributes.contains($0.key) }))
     }
 
     // Xcode Cloud fills these in from deviceTypeIdentifier and runtimeIdentifier, and they go stale. Comparing them would show changes nobody made.
@@ -47,6 +47,32 @@ struct WorkflowDefinition {
             var action = action
             action["testConfiguration"] = configuration
             return action
+        }
+        return attributes
+    }
+
+    // App Store Connect stores an unset matcher directory as "", while an unset fileExtension or fileName stays null. A file writing null would otherwise always differ.
+    private static let startConditionsWithFileRules = ["branchStartCondition", "pullRequestStartCondition", "tagStartCondition"]
+
+    private static func withNormalizedMatchers(_ attributes: JSON) -> JSON {
+        var attributes = attributes
+        for key in startConditionsWithFileRules {
+            guard var condition = attributes[key] as? JSON,
+                  var rule = condition["filesAndFoldersRule"] as? JSON,
+                  let matchers = rule["matchers"] as? [JSON]
+            else {
+                continue
+            }
+            rule["matchers"] = matchers.map { matcher -> JSON in
+                guard matcher["directory"] == nil || matcher["directory"] is NSNull else {
+                    return matcher
+                }
+                var matcher = matcher
+                matcher["directory"] = ""
+                return matcher
+            }
+            condition["filesAndFoldersRule"] = rule
+            attributes[key] = condition
         }
         return attributes
     }
@@ -380,6 +406,35 @@ struct WorkflowSync {
             .sorted()
     }
 
+    struct Difference: Equatable {
+        let path: String
+        let before: String
+        let after: String
+
+        var markdown: [String] {
+            guard before.count + after.count > 120 else {
+                return ["- `\(path)`: `\(before)` → `\(after)`"]
+            }
+            return ["- `\(path)`:", "  ```", "  before: \(before)", "  after:  \(after)", "  ```"]
+        }
+    }
+
+    static func differences(_ before: Any?, _ after: Any?, path: String) -> [Difference] {
+        if let before = before as? JSON, let after = after as? JSON {
+            return Set(before.keys).union(after.keys).sorted().flatMap { key in
+                differences(before[key], after[key], path: "\(path).\(key)")
+            }
+        }
+        if let before = before as? [Any], let after = after as? [Any], before.count == after.count {
+            return before.indices.flatMap { index in
+                differences(before[index], after[index], path: "\(path)[\(index)]")
+            }
+        }
+        let beforeText = canonical(before)
+        let afterText = canonical(after)
+        return beforeText == afterText ? [] : [Difference(path: path, before: beforeText, after: afterText)]
+    }
+
     static func canonical(_ value: Any?) -> String {
         let value = value ?? NSNull()
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes]) else {
@@ -426,11 +481,9 @@ extension SyncPlan {
                     lines.append("- `\(key)`: \(current.definition[keyPath: path] ?? "none") → \(file.definition[keyPath: path] ?? "none")")
                 }
                 for key in attributes {
-                    lines.append("- `\(key)`:")
-                    lines.append("  ```")
-                    lines.append("  before: \(WorkflowSync.canonical(current.definition.attributes[key]))")
-                    lines.append("  after:  \(WorkflowSync.canonical(file.definition.attributes[key]))")
-                    lines.append("  ```")
+                    for difference in WorkflowSync.differences(current.definition.attributes[key], file.definition.attributes[key], path: key) {
+                        lines += difference.markdown
+                    }
                 }
             case .delete(let workflow):
                 lines.append("### ⚠️ Delete: \(workflow.definition.name) (\(workflow.product.label))")
