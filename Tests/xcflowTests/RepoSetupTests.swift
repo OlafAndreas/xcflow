@@ -104,6 +104,33 @@ struct RepoSetupTests {
         #expect(workflows.allSatisfy { $0.content.contains("runs-on: ubuntu-latest") && !$0.content.contains("macos") })
     }
 
+    @Test func secretsThatAreAllSetAreSkipped() {
+        let decision = RepoSetup.SecretsDecision(existing: .success(["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_CONTENT", "OTHER"]), replace: false)
+        #expect(decision.question == nil)
+        #expect(decision.message.contains("Skipping"))
+    }
+
+    @Test func secretsCanBeReplacedOnRequest() {
+        let decision = RepoSetup.SecretsDecision(existing: .success(["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_CONTENT"]), replace: true)
+        #expect(decision.question == "Replace all three, from a team API key?")
+    }
+
+    @Test func missingSecretsAreNamedAndSetTogether() {
+        let partial = RepoSetup.SecretsDecision(existing: .success(["ASC_KEY_ID"]), replace: false)
+        #expect(partial.message.hasPrefix("ASC_ISSUER_ID, ASC_KEY_CONTENT are missing"))
+        #expect(partial.question == "Set all three, from a team API key?")
+
+        let none = RepoSetup.SecretsDecision(existing: .success(["TAP_TOKEN"]), replace: false)
+        #expect(none.message.hasPrefix("None of"))
+        #expect(none.question == "Set them, from a team API key?")
+    }
+
+    @Test func unreadableSecretsFallBackToAsking() {
+        let decision = RepoSetup.SecretsDecision(existing: .failure(ToolError.refused("gh is not logged in")), replace: false)
+        #expect(decision.message == "Couldn't read the repo's GitHub secrets: gh is not logged in")
+        #expect(decision.question != nil)
+    }
+
     @Test func checksumFilesAreParsed() {
         let sha = String(repeating: "b", count: 64)
         let parsed = RepoSetup.parseChecksums("\(sha)  xcflow-1.2.3.tar.gz\n\(sha) *xcflow-1.2.3-linux-x86_64.tar.gz\nnot a checksum line\n")
