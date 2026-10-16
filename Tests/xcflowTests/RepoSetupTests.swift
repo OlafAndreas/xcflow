@@ -82,14 +82,15 @@ struct RepoSetupTests {
 
     @Test func installActionPicksTheArchiveForTheRunner() {
         let pinned = Templates.files(version: "1.2.3", checksums: [
-            "xcflow-1.2.3.tar.gz": "1" + String(repeating: "0", count: 63),
             "xcflow-1.2.3-linux-x86_64.tar.gz": "2" + String(repeating: "0", count: 63),
             "xcflow-1.2.3-linux-aarch64.tar.gz": "3" + String(repeating: "0", count: 63)
         ]).first { $0.path == ".github/actions/xcflow/action.yml" }?.content ?? ""
         #expect(pinned.contains("releases/download/v1.2.3/$NAME"))
         #expect(pinned.contains(#"Linux-X64) NAME="xcflow-1.2.3-linux-x86_64.tar.gz"; SUM="2"#))
         #expect(pinned.contains(#"Linux-ARM64) NAME="xcflow-1.2.3-linux-aarch64.tar.gz"; SUM="3"#))
-        #expect(pinned.contains(#"macOS-*) NAME="xcflow-1.2.3.tar.gz"; SUM="1"#))
+        #expect(!pinned.contains("macOS-"))
+        #expect(!pinned.contains("xcflow-1.2.3.tar.gz"))
+        #expect(pinned.contains("Linux runners only"))
         #expect(!pinned.contains("{{"))
 
         let unpinned = Templates.files(version: "1.2.3", checksums: [:]).first { $0.path == ".github/actions/xcflow/action.yml" }?.content ?? ""
