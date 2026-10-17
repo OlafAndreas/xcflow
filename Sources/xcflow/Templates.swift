@@ -283,6 +283,7 @@ enum Templates {
     - In a start condition's `filesAndFoldersRule`, App Store Connect stores an unset matcher `directory` as `""`, while an unset `fileExtension` or `fileName` stays `null`. xcflow treats a `null` directory as `""`, so either works, but `""` matches what `export` writes.
     - Renaming a workflow is a change to `attributes.name`. Keep the `id` so its build history stays.
     - Deleting a file deletes the workflow, together with its build history.
+    - A workflow with **Restrict Editing** turned on in App Store Connect (`"isLockedForEditing" : true`) can't be changed or deleted through the API. `plan` warns when a change touches one; turn Restrict Editing off in App Store Connect before merging.
 
     ## Changing a workflow
 
