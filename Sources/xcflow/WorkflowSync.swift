@@ -259,7 +259,7 @@ struct WorkflowSync {
         guard let environments = plan.environments else {
             throw ToolError.refused("The plan has no environments. Run plan before apply.")
         }
-        report("## Xcode Cloud sync\n")
+        report("## Xcode Cloud apply\n")
         for change in plan.changes {
             switch change {
             case .create(let file):
