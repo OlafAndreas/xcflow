@@ -130,6 +130,28 @@ struct WorkflowSyncTests {
         #expect(grown == [.init(path: "list", before: #"["a"]"#, after: #"["a","b"]"#)])
     }
 
+    @Test func changesToLockedWorkflowsAreFlagged() async throws {
+        var locked = Fixtures.workflow(id: Fixtures.releaseID, name: "Release")
+        var attributes = locked["attributes"] as? JSON ?? [:]
+        attributes["isLockedForEditing"] = true
+        locked["attributes"] = attributes
+        let snapshot = try Fixtures.makeFolder([
+            "com.example.app/nightly-tests.json": Fixtures.workflow(id: Fixtures.nightlyID, name: "Nightly tests"),
+            "com.example.app/release.json": locked
+        ])
+        var lockedEdit = locked
+        attributes["description"] = "Changed"
+        lockedEdit["attributes"] = attributes
+        let desired = try Fixtures.makeFolder([
+            "com.example.app/nightly-tests.json": Fixtures.workflow(id: Fixtures.nightlyID, name: "Nightly tests", hour: 6),
+            "com.example.app/release.json": lockedEdit
+        ])
+        let (plan, _) = try await plan(desired: desired, snapshot: snapshot)
+        let sections = plan.markdown.components(separatedBy: "### ")
+        #expect(sections.first { $0.hasPrefix("Update: Release") }?.contains("Restrict Editing") == true)
+        #expect(sections.first { $0.hasPrefix("Update: Nightly tests") }?.contains("Restrict Editing") == false)
+    }
+
     @Test func slugs() {
         #expect(WorkflowSync.slug("Deploy on \"release*\"-tag") == "deploy-on-release-tag")
         #expect(WorkflowSync.slug("!!!") == "workflow")

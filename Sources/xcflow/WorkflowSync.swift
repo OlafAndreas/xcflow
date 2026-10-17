@@ -107,11 +107,17 @@ struct WorkflowFile {
 }
 
 struct LiveWorkflow {
+    static let lockedWarning = "> ⚠️ This workflow has **Restrict Editing** turned on in App Store Connect, so App Store Connect may reject this change. Turn Restrict Editing off for it in App Store Connect before merging."
+
     let product: Product
     let definition: WorkflowDefinition
 
     var id: String {
         definition.id ?? ""
+    }
+
+    var isLockedForEditing: Bool {
+        definition.attributes["isLockedForEditing"] as? Bool == true
     }
 }
 
@@ -476,6 +482,9 @@ extension SyncPlan {
                 lines.append("From `\(file.path)`.")
             case .update(let file, let current, let attributes, let environment):
                 lines.append("### Update: \(file.definition.name) (\(file.product.label))")
+                if current.isLockedForEditing {
+                    lines.append(LiveWorkflow.lockedWarning)
+                }
                 for key in environment {
                     let path: KeyPath<WorkflowDefinition, String?> = key == "xcodeVersion" ? \.xcodeVersion : \.macOsVersion
                     lines.append("- `\(key)`: \(current.definition[keyPath: path] ?? "none") → \(file.definition[keyPath: path] ?? "none")")
@@ -487,6 +496,9 @@ extension SyncPlan {
                 }
             case .delete(let workflow):
                 lines.append("### ⚠️ Delete: \(workflow.definition.name) (\(workflow.product.label))")
+                if workflow.isLockedForEditing {
+                    lines.append(LiveWorkflow.lockedWarning)
+                }
                 lines.append("No file defines this workflow any more. Deleting it also deletes its build history.")
             }
         }
