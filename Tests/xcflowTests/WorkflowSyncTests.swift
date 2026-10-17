@@ -46,6 +46,7 @@ struct WorkflowSyncTests {
         try await sync.apply(plan) { report.append($0) }
         let writes = await server.log.filter { !$0.hasPrefix("GET") }.map { $0.components(separatedBy: "\n")[0] }
         #expect(writes.sorted() == ["DELETE /v1/ciWorkflows/\(Fixtures.releaseID)", "PATCH /v1/ciWorkflows/\(Fixtures.nightlyID)", "POST /v1/ciWorkflows"])
+        #expect(report.first == "## Xcode Cloud apply\n")
         #expect(report.contains { $0.contains("Created **Weekly**") })
     }
 

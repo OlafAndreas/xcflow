@@ -1,3 +1,3 @@
 enum Version {
-    static let current = "0.2.2"
+    static let current = "0.2.3"
 }
