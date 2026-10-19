@@ -98,6 +98,13 @@ struct RepoSetupTests {
         #expect(!unpinned.contains("{{"))
     }
 
+    @Test func generatedActionsPinTheCurrentCheckout() {
+        let generated = Templates.files(version: "1.2.3", checksums: [:]).filter { $0.path.hasPrefix(".github/") }
+        let pins = generated.flatMap { $0.content.matches(of: /actions\/checkout@v\d+/).map { String($0.output) } }
+        #expect(pins.count == 3)
+        #expect(pins.allSatisfy { $0 == "actions/checkout@v7" })
+    }
+
     @Test func workflowsRunOnLinux() {
         let workflows = Templates.files(version: "1.2.3", checksums: [:]).filter { $0.path.hasPrefix(".github/workflows/") }
         #expect(workflows.count == 3)
