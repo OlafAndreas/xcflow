@@ -72,6 +72,9 @@ actor DryRunServer {
                 throw AppStoreConnectError(status: 404, details: ["Dry run: no workflow \(parts[2]) in the snapshot"])
             }
             return workflowResponse(workflow.definition)
+        case ["v1", "apps"]:
+            let bundleIDs = Set(workflows.map(\.bundleID)).sorted()
+            return ["data": bundleIDs.map { ["type": "apps", "id": Self.placeholder("apps", $0), "attributes": ["name": $0, "bundleId": $0]] as JSON }]
         case ["v1", "ciXcodeVersions"]:
             return ["data": xcodeVersions.map { Self.environment("ciXcodeVersions", $0) }]
         case ["v1", "ciMacOsVersions"]:
@@ -108,6 +111,10 @@ actor DryRunServer {
     private static func read(_ root: URL) throws -> [(bundleID: String, definition: WorkflowDefinition)] {
         var result: [(String, WorkflowDefinition)] = []
         let fileManager = FileManager.default
+        // A repo that hasn't exported anything yet has no XcodeCloud/ folder.
+        guard fileManager.fileExists(atPath: root.path(percentEncoded: false)) else {
+            return []
+        }
         for folder in try fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey]) where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
             for file in try fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) where file.pathExtension == "json" {
                 guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? JSON else {

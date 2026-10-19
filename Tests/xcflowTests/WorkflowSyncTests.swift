@@ -156,4 +156,56 @@ struct WorkflowSyncTests {
         #expect(WorkflowSync.slug("Deploy on \"release*\"-tag") == "deploy-on-release-tag")
         #expect(WorkflowSync.slug("!!!") == "workflow")
     }
+
+    // The dry-run server gives every product the id "<ciProducts: bundle id>", so a manifest naming that id resolves to the product.
+    private func emptyRepo() throws -> URL {
+        try Fixtures.makeRepo().appending(path: "XcodeCloud", directoryHint: .isDirectory)
+    }
+
+    private func exportError(_ root: URL, snapshot: URL, bundleIDs: [String] = []) async -> String {
+        do {
+            let server = try DryRunServer(snapshot: snapshot, desired: root)
+            _ = try await WorkflowSync(client: AppStoreConnectClient(dryRun: server), root: root).export(bundleIDs: bundleIDs)
+            return ""
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    @Test func exportFindsTheProductsThroughTheManifest() async throws {
+        let live = try Fixtures.standard()
+        let repo = try emptyRepo()
+        try Fixtures.writeManifest(in: repo.deletingLastPathComponent(), project: "Example.xcodeproj", productIDs: ["<ciProducts: com.example.app>"])
+
+        let server = try DryRunServer(snapshot: live, desired: repo)
+        let report = try await WorkflowSync(client: AppStoreConnectClient(dryRun: server), root: repo).export(bundleIDs: [])
+
+        let files = try FileManager.default.contentsOfDirectory(atPath: repo.appending(path: "com.example.app").path(percentEncoded: false)).sorted()
+        #expect(files == ["nightly-tests.json", "release.json"])
+        #expect(report.contains("Exported 2 workflows"))
+    }
+
+    @Test func exportWithoutAManifestExplainsTheFirstTimeSetup() async throws {
+        let repo = try emptyRepo()
+        try Fixtures.makeProject(in: repo.deletingLastPathComponent(), project: "Example.xcodeproj")
+        let message = await exportError(repo, snapshot: try Fixtures.standard())
+        #expect(message.contains("No Xcode Cloud manifest"))
+        #expect(message.contains("Example.xcodeproj"))
+        #expect(message.contains("Create Workflow"))
+    }
+
+    @Test func exportNamesAStaleManifest() async throws {
+        let repo = try emptyRepo()
+        try Fixtures.writeManifest(in: repo.deletingLastPathComponent(), project: "Example.xcodeproj", productIDs: ["<ciProducts: com.gone.app>"])
+        let message = await exportError(repo, snapshot: try Fixtures.standard())
+        #expect(message.contains("Example.xcodeproj/xcshareddata/xcodecloud/manifest.json"))
+        #expect(message.contains("<ciProducts: com.gone.app>"))
+        #expect(message.contains("xcflow export com.example.app"))
+    }
+
+    @Test func exportOfAnUnknownBundleIDListsTheApps() async throws {
+        let message = await exportError(try emptyRepo(), snapshot: try Fixtures.standard(), bundleIDs: ["com.other.app"])
+        #expect(message.contains("No app with bundle id com.other.app"))
+        #expect(message.contains("com.example.app"))
+    }
 }

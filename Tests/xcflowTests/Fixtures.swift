@@ -62,3 +62,28 @@ enum Fixtures {
         ])
     }
 }
+
+extension Fixtures {
+    static func makeRepo() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appending(path: "xcflow-repo-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    @discardableResult
+    static func makeProject(in root: URL, project: String) throws -> URL {
+        let url = root.appending(path: project, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    static func writeManifest(in root: URL, project: String, productIDs: [String]) throws {
+        let folder = try makeProject(in: root, project: project).appending(path: "xcshareddata/xcodecloud", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let json: JSON = [
+            "id": UUID().uuidString.lowercased(),
+            "targets": productIDs.map { ["id": $0, "name": "Target"] as JSON }
+        ]
+        try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appending(path: "manifest.json"))
+    }
+}
