@@ -27,6 +27,8 @@ Homebrew installs the macOS build. Each release also has Linux builds for x86_64
 
 ## Set up a repo
 
+Xcode Cloud has to be switched on for the app first: create its first workflow in Xcode (**Product → Xcode Cloud → Create Workflow…**) or in App Store Connect. That step also connects the repository, and the App Store Connect API can't do either. Xcode then records the product in `<project>.xcodeproj/xcshareddata/xcodecloud/manifest.json`; commit that file, because it is how `setup` and `export` find the products to manage.
+
 1. Create an App Store Connect API key for yourself: your profile (top right) → **Edit Profile** → **Individual API Key** → **Generate API Key**. Then store it in your Keychain:
 
    ```bash
@@ -42,7 +44,7 @@ Homebrew installs the macOS build. Each release also has Linux builds for x86_64
 
    `setup` asks before each step that calls App Store Connect or GitHub, and never overwrites a changed file without asking. It adds:
 
-   - `XcodeCloud/<bundle id>/*.json`: one file per workflow, exported from the products you pick, plus a README on the format.
+   - `XcodeCloud/<bundle id>/*.json`: one file per workflow, exported from the products in the project's Xcode Cloud manifest, or from the ones you pass with `--products`, plus a README on the format.
    - `.github/workflows/xcflow-plan.yml`, `xcflow-apply.yml` and `xcflow-sync.yml`, running on `ubuntu-latest`, and `.github/actions/xcflow/`, which installs a pinned xcflow release on the runner and checks its checksum.
    - `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files.
    - An `xcflow` entry in `.mcp.json`.
@@ -66,7 +68,7 @@ Only products with a folder in `XcodeCloud/` are managed. Deleting a workflow's 
 | `xcflow auth --key-id <id> --p8 <path>` | Checks a key against App Store Connect and stores it in the Keychain. |
 | `xcflow plan` | Validates `XcodeCloud/` and prints what would change. Reads only. |
 | `xcflow apply` | Makes those changes. Meant for CI on the default branch. |
-| `xcflow export [<bundle id> …]` | Writes the live workflows to `XcodeCloud/`. |
+| `xcflow export [<bundle id> …]` | Writes the live workflows to `XcodeCloud/`. Without ids: the products already there, or the ones in the project's Xcode Cloud manifest. |
 | `xcflow get <path> [key=value …]` | Prints a raw App Store Connect API response. |
 
 `--dry-run <folder>` with `plan`, `apply` or `export` answers from the workflow files in that folder instead of the API, and prints every request it would send. Nothing is sent and no key is needed. Copy `XcodeCloud/` before editing and pass the copy to see exactly what a change would do.

@@ -162,13 +162,13 @@ struct WorkflowSync {
 
     func export(bundleIDs requested: [String]) async throws -> String {
         let products = try await client.products()
-        let bundleIDs = requested.isEmpty ? try managedBundleIDs() : requested
-        guard !bundleIDs.isEmpty else {
-            throw ToolError.missingArgument("bundle id")
-        }
         var lines: [String] = []
+        var bundleIDs = requested.isEmpty ? try managedBundleIDs() : requested
+        if bundleIDs.isEmpty {
+            (bundleIDs, lines) = try Self.manifestProducts(in: root.deletingLastPathComponent(), products: products)
+        }
         for bundleID in bundleIDs {
-            let product = try product(bundleID, in: products)
+            let product = try await product(bundleID, in: products)
             let folder = root.appending(path: bundleID)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let existing = try readFiles(in: folder, product: product).reduce(into: [String: String]()) { names, file in
@@ -207,7 +207,7 @@ struct WorkflowSync {
         var managed: [(Product, [WorkflowFile])] = []
         for bundleID in try managedBundleIDs() {
             do {
-                let product = try product(bundleID, in: products)
+                let product = try await product(bundleID, in: products)
                 let files = try readFiles(in: root.appending(path: bundleID), product: product, errors: &plan.errors)
                 plan.errors += Self.validate(files, environments)
                 managed.append((product, files))
@@ -370,9 +370,52 @@ struct WorkflowSync {
         return files
     }
 
-    private func product(_ bundleID: String, in products: [Product]) throws -> Product {
+    static func noProductMessage(bundleID: String, apps: [App]) -> String {
+        if let app = apps.first(where: { $0.bundleID == bundleID }) {
+            return """
+            Xcode Cloud isn't set up for \(app.name) (\(bundleID)) yet.
+            Create its first workflow by hand, which also connects the repository:
+              - in Xcode: Product → Xcode Cloud → Create Workflow…
+              - or in App Store Connect: the app → Xcode Cloud → Get Started
+            The App Store Connect API can't create a product. Once the workflow exists, run `xcflow export \(bundleID)`.
+            """
+        }
+        let known = apps.map(\.label).sorted()
+        return "No app with bundle id \(bundleID) in this team. Check the bundle id, and that the key belongs to the right team. Apps: \(known.isEmpty ? "none" : known.joined(separator: ", "))."
+    }
+
+    /// The products named by the project's Xcode Cloud manifests, as bundle ids, with a line per manifest for the report.
+    static func manifestProducts(in projectRoot: URL, products: [Product]) throws -> (bundleIDs: [String], lines: [String]) {
+        let hint = "xcflow export com.example.app"
+        var bundleIDs: Set<String> = []
+        var lines: [String] = []
+        var stale: [String] = []
+        for manifest in try Manifests.find(in: projectRoot) {
+            var found: [Product] = []
+            for id in manifest.productIDs {
+                if let product = products.first(where: { $0.id == id }) {
+                    found.append(product)
+                } else {
+                    stale.append("\(manifest.path) names the product \(id), which App Store Connect doesn't have. The product was probably deleted.")
+                }
+            }
+            if !found.isEmpty {
+                bundleIDs.formUnion(found.map(\.bundleID))
+                lines.append("Products in \(manifest.path): \(found.map(\.label).joined(separator: ", "))")
+            }
+        }
+        guard !bundleIDs.isEmpty else {
+            if stale.isEmpty {
+                throw ToolError.notFound(Manifests.noManifestMessage(projects: Manifests.projects(in: projectRoot), root: projectRoot, hint: hint))
+            }
+            throw ToolError.notFound((stale + ["Pass the bundle id of the product to manage instead: \(hint)"]).joined(separator: "\n"))
+        }
+        return (bundleIDs.sorted(), lines + stale)
+    }
+
+    private func product(_ bundleID: String, in products: [Product]) async throws -> Product {
         guard let product = products.first(where: { $0.bundleID == bundleID }) else {
-            throw ToolError.notFound("No Xcode Cloud product with bundle id \(bundleID). Products: \(products.map(\.label).joined(separator: ", "))")
+            throw ToolError.notFound(Self.noProductMessage(bundleID: bundleID, apps: try await client.apps()))
         }
         return product
     }
