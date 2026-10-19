@@ -48,7 +48,8 @@ enum RepoSetup {
         case keptDifferent
     }
 
-    static func run(arguments: [String]) async throws {
+    @discardableResult
+    static func run(arguments: [String], client: AppStoreConnectClient? = nil) async throws -> [String] {
         let options = try Options(arguments: arguments)
         let root = try options.repo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? gitRoot()
         let prompt = Prompt(yes: options.yes, dryRun: options.dryRun)
@@ -57,31 +58,7 @@ enum RepoSetup {
         print(options.dryRun ? "Dry run of xcflow setup in \(rootPath). Nothing is written or sent.\n" : "Setting up xcflow in \(rootPath).\n")
 
         var todo: [String] = []
-        let existing = existingProducts(in: workflows)
-        var products = options.products ?? existing
-        if products.isEmpty {
-            if !options.dryRun, prompt.ask("No products chosen. List the Xcode Cloud products your key can see in App Store Connect?") {
-                products = try await chooseProducts(prompt: prompt)
-            } else {
-                todo.append("Choose the products to manage, e.g. `xcflow setup --products com.example.app`.")
-            }
-        }
-
-        let missing = products.filter { !existing.contains($0) }
-        if !missing.isEmpty {
-            if options.skipExport {
-                todo.append("Export the workflows of \(missing.joined(separator: ", ")) with `xcflow export \(missing.joined(separator: " "))`.")
-            } else if options.dryRun {
-                print("Would export the live workflows of \(missing.joined(separator: ", ")) from App Store Connect.")
-            } else if prompt.ask("Export the live workflows of \(missing.joined(separator: ", ")) from App Store Connect into XcodeCloud/?") {
-                let client = AppStoreConnectClient(tokens: try TokenProvider(credentials: try CredentialStore.load()))
-                print(try await WorkflowSync(client: client, root: workflows).export(bundleIDs: missing))
-            } else {
-                todo.append("Export the workflows of \(missing.joined(separator: ", ")) with `xcflow export \(missing.joined(separator: " "))`.")
-            }
-        } else if !products.isEmpty {
-            print("XcodeCloud/ already has \(products.joined(separator: ", ")). Leaving those files as they are.")
-        }
+        try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, todo: &todo)
 
         var checksumsText = try options.checksumsFile.map { try String(contentsOf: URL(filePath: $0), encoding: .utf8) }
         if checksumsText == nil, !options.dryRun {
@@ -115,6 +92,7 @@ enum RepoSetup {
         todo.append("Check that the team key's role can edit Xcode Cloud workflows: Admin, or App Manager with Xcode Cloud access.")
         print("\nStill to do:")
         print(todo.map { "- \($0)" }.joined(separator: "\n"))
+        return todo
     }
 
     // MARK: - Files
@@ -175,20 +153,48 @@ enum RepoSetup {
             .sorted()
     }
 
-    private static func chooseProducts(prompt: Prompt) async throws -> [String] {
-        let client = AppStoreConnectClient(tokens: try TokenProvider(credentials: try CredentialStore.load()))
-        let products = try await client.products().sorted { $0.label < $1.label }
-        for (index, product) in products.enumerated() {
-            print("  \(index + 1). \(product.label)")
+    /// Exports the products' workflows into XcodeCloud/, or says what stands in the way. Setup carries on either way, so the repo is ready the moment the product exists.
+    private static func exportProducts(_ options: Options, root: URL, workflows: URL, prompt: Prompt, client: AppStoreConnectClient?, todo: inout [String]) async throws {
+        let existing = existingProducts(in: workflows)
+        let products = options.products ?? existing
+        let bundleIDs: [String]
+        let described: String
+        if !products.isEmpty {
+            let missing = products.filter { !existing.contains($0) }
+            guard !missing.isEmpty else {
+                print("XcodeCloud/ already has \(products.joined(separator: ", ")). Leaving those files as they are.")
+                return
+            }
+            bundleIDs = missing
+            described = missing.joined(separator: ", ")
+        } else {
+            let manifests = try Manifests.find(in: root)
+            guard !manifests.isEmpty else {
+                print(Manifests.noManifestMessage(projects: Manifests.projects(in: root), root: root, hint: "xcflow setup --products com.example.app"), terminator: "\n\n")
+                todo.append("Create the app's first Xcode Cloud workflow in Xcode or App Store Connect, then run `xcflow export`.")
+                return
+            }
+            // export reads the manifests itself when it gets no bundle ids.
+            bundleIDs = []
+            described = "the products in " + manifests.map(\.path).joined(separator: ", ")
         }
-        let answer = prompt.read("Which products should xcflow manage? Numbers, separated by commas:") ?? ""
-        let picked = answer.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            .filter { products.indices.contains($0 - 1) }
-            .map { products[$0 - 1].bundleID }
-        guard !picked.isEmpty else {
-            throw ToolError.refused("No products chosen.")
+
+        let command = (["xcflow", "export"] + bundleIDs).joined(separator: " ")
+        if options.skipExport {
+            todo.append("Export the workflows of \(described) with `\(command)`.")
+        } else if options.dryRun {
+            print("Would export the live workflows of \(described) from App Store Connect.")
+        } else if prompt.ask("Export the live workflows of \(described) from App Store Connect into XcodeCloud/?") {
+            do {
+                let client = try client ?? AppStoreConnectClient(tokens: TokenProvider(credentials: CredentialStore.load()))
+                print(try await WorkflowSync(client: client, root: workflows).export(bundleIDs: bundleIDs))
+            } catch {
+                print("Export failed: \(error.localizedDescription)", terminator: "\n\n")
+                todo.append("Fix the above, then run `\(command)`.")
+            }
+        } else {
+            todo.append("Export the workflows of \(described) with `\(command)`.")
         }
-        return picked
     }
 
     // MARK: - Outside services

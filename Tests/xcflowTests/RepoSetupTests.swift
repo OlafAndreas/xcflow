@@ -136,4 +136,35 @@ struct RepoSetupTests {
         let parsed = RepoSetup.parseChecksums("\(sha)  xcflow-1.2.3.tar.gz\n\(sha) *xcflow-1.2.3-linux-x86_64.tar.gz\nnot a checksum line\n")
         #expect(parsed == ["xcflow-1.2.3.tar.gz": sha, "xcflow-1.2.3-linux-x86_64.tar.gz": sha])
     }
+
+    private func setupTodo(_ root: URL, _ extra: [String], client: AppStoreConnectClient? = nil) async throws -> [String] {
+        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--skip-secrets", "--checksums", try checksumsFile()] + extra, client: client)
+    }
+
+    @Test func setupWithoutAManifestExplainsTheFirstTimeSetupAndStillWritesTheFiles() async throws {
+        let root = try makeRepo()
+        try Fixtures.makeProject(in: root, project: "Example.xcodeproj")
+        let todo = try await setupTodo(root, ["--skip-export"])
+        #expect(files(in: root).contains(".github/workflows/xcflow-apply.yml"))
+        #expect(todo.contains { $0.contains("first Xcode Cloud workflow") })
+        #expect(!todo.contains { $0.contains("Choose the products") })
+    }
+
+    @Test func setupExportsTheProductsInTheManifest() async throws {
+        let root = try makeRepo()
+        try Fixtures.writeManifest(in: root, project: "Example.xcodeproj", productIDs: ["<ciProducts: com.example.app>"])
+        let server = try DryRunServer(snapshot: try Fixtures.standard(), desired: root.appending(path: "XcodeCloud"))
+        let todo = try await setupTodo(root, ["--yes"], client: AppStoreConnectClient(dryRun: server))
+        #expect(files(in: root).contains("XcodeCloud/com.example.app/nightly-tests.json"))
+        #expect(!todo.contains { $0.contains("xcflow export") })
+    }
+
+    @Test func setupKeepsGoingWhenTheExportFails() async throws {
+        let root = try makeRepo()
+        try Fixtures.makeProject(in: root, project: "Example.xcodeproj")
+        let server = try DryRunServer(snapshot: try Fixtures.standard(), desired: root.appending(path: "XcodeCloud"))
+        let todo = try await setupTodo(root, ["--yes", "--products", "com.other.app"], client: AppStoreConnectClient(dryRun: server))
+        #expect(files(in: root).contains(".github/workflows/xcflow-apply.yml"))
+        #expect(todo.contains { $0.contains("xcflow export com.other.app") })
+    }
 }

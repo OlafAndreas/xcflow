@@ -27,3 +27,19 @@ extension AppStoreConnectClient {
         }
     }
 }
+
+struct App {
+    let name: String
+    let bundleID: String
+
+    var label: String {
+        "\(name) (\(bundleID))"
+    }
+}
+
+extension AppStoreConnectClient {
+    func apps() async throws -> [App] {
+        let page = try await getAll("/v1/apps", query: ["fields[apps]": "name,bundleId", "limit": "200"])
+        return page.data.map { App(name: $0.string("name") ?? $0.id, bundleID: $0.string("bundleId") ?? "?") }
+    }
+}
