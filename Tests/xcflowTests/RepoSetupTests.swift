@@ -33,6 +33,41 @@ struct RepoSetupTests {
             .sorted()
     }
 
+    /// Stands in for `gh secret`; records what setup would have set.
+    final class FakeSecrets: SecretStore, @unchecked Sendable {
+        var existing: Set<String>
+        var set: [String: String] = [:]
+
+        init(existing: Set<String> = []) {
+            self.existing = existing
+        }
+
+        func names(in root: URL) throws -> Set<String> { existing }
+
+        func set(_ name: String, to value: String, in root: URL) throws {
+            set[name] = value
+            existing.insert(name)
+        }
+    }
+
+    /// A stand-in .p8, outside the repo so the repo's file list stays meaningful.
+    private func writeKey() throws -> (path: String, base64: String) {
+        let pem = "-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49\n-----END PRIVATE KEY-----\n"
+        let url = FileManager.default.temporaryDirectory.appending(path: "xcflow-key-\(UUID().uuidString).p8")
+        try pem.write(to: url, atomically: true, encoding: .utf8)
+        return (url.path(percentEncoded: false), Data(pem.utf8).base64EncodedString())
+    }
+
+    /// Runs setup with the secrets step live against `secrets`, never interactive, so no test can block on a prompt.
+    @discardableResult
+    private func setupSecrets(_ root: URL, _ extra: [String], secrets: FakeSecrets) async throws -> [String] {
+        try await RepoSetup.run(
+            arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--checksums", try checksumsFile()] + extra,
+            secrets: secrets,
+            interactive: false
+        )
+    }
+
     private func setup(_ root: URL, _ extra: [String] = []) async throws {
         try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--checksums", try checksumsFile()] + extra)
     }
@@ -184,5 +219,72 @@ struct RepoSetupTests {
         let todo = try await setupTodo(root, ["--yes", "--products", "com.other.app"], client: AppStoreConnectClient(dryRun: server))
         #expect(files(in: root).contains(".github/workflows/xcflow-apply.yml"))
         #expect(todo.contains { $0.contains("xcflow export com.other.app") })
+    }
+
+    @Test func setupSetsTheSecretsFromTheKeyFlags() async throws {
+        let root = try makeRepo()
+        let key = try writeKey()
+        let secrets = FakeSecrets()
+        let todo = try await setupSecrets(root, ["--key-id", "ABC123", "--issuer-id", "11111111-2222-3333-4444-555555555555", "--p8", key.path], secrets: secrets)
+        #expect(secrets.set == ["ASC_KEY_ID": "ABC123", "ASC_ISSUER_ID": "11111111-2222-3333-4444-555555555555", "ASC_KEY_CONTENT": key.base64])
+        #expect(!todo.contains { $0.contains("secrets") })
+    }
+
+    @Test func setupLeavesExistingSecretsAloneUnlessReplacing() async throws {
+        let root = try makeRepo()
+        let key = try writeKey()
+        let flags = ["--key-id", "ABC123", "--issuer-id", "issuer", "--p8", key.path]
+
+        let kept = FakeSecrets(existing: Set(RepoSetup.secretNames))
+        try await setupSecrets(root, flags, secrets: kept)
+        #expect(kept.set.isEmpty)
+
+        let replaced = FakeSecrets(existing: Set(RepoSetup.secretNames))
+        try await setupSecrets(root, flags + ["--replace-secrets"], secrets: replaced)
+        #expect(replaced.set.keys.sorted() == RepoSetup.secretNames.sorted())
+    }
+
+    @Test func setupWithoutATerminalNeedsAllThreeKeyFlags() async throws {
+        let root = try makeRepo()
+        let secrets = FakeSecrets()
+        let message = await setupSecretsError(root, ["--yes", "--key-id", "ABC123"], secrets: secrets)
+        #expect(message.contains("--issuer-id"))
+        #expect(message.contains("--p8"))
+        #expect(secrets.set.isEmpty)
+    }
+
+    @Test func setupWithoutAKeyLeavesASecretsTodoNamingTheFlags() async throws {
+        let root = try makeRepo()
+        let secrets = FakeSecrets()
+        let todo = try await setupSecrets(root, [], secrets: secrets)
+        #expect(todo.contains { $0.contains("--key-id") && $0.contains("--issuer-id") && $0.contains("--p8") })
+        #expect(secrets.set.isEmpty)
+    }
+
+    @Test func setupRefusesAnUnreadableKeyFileBeforeWritingAnything() async throws {
+        let root = try makeRepo()
+        let secrets = FakeSecrets()
+        let message = await setupSecretsError(root, ["--key-id", "ABC123", "--issuer-id", "issuer", "--p8", root.appending(path: "missing.p8").path(percentEncoded: false)], secrets: secrets)
+        #expect(message.contains("missing.p8"))
+        #expect(files(in: root).isEmpty)
+        #expect(secrets.set.isEmpty)
+    }
+
+    @Test func dryRunSetsNoSecretsEvenWithTheKeyFlags() async throws {
+        let root = try makeRepo()
+        let key = try writeKey()
+        let secrets = FakeSecrets()
+        try await setupSecrets(root, ["--dry-run", "--key-id", "ABC123", "--issuer-id", "issuer", "--p8", key.path], secrets: secrets)
+        #expect(secrets.set.isEmpty)
+        #expect(files(in: root).isEmpty)
+    }
+
+    private func setupSecretsError(_ root: URL, _ extra: [String], secrets: FakeSecrets) async -> String {
+        do {
+            try await setupSecrets(root, extra, secrets: secrets)
+            return "no error"
+        } catch {
+            return error.localizedDescription
+        }
     }
 }
