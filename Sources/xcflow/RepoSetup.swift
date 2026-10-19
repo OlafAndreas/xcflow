@@ -14,6 +14,12 @@ enum RepoSetup {
         var replaceSecrets = false
         var repo: String?
         var checksumsFile: String?
+        var keyID: String?
+        var issuerID: String?
+        var p8: String?
+
+        /// All three key flags were given, so the secrets can be set without asking.
+        var hasWholeKey: Bool { keyID != nil && issuerID != nil && p8 != nil }
 
         init(arguments: [String]) throws {
             var rest = arguments[...]
@@ -28,6 +34,9 @@ enum RepoSetup {
                 case "--products": products = try Self.value(argument, &rest).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 case "--repo": repo = try Self.value(argument, &rest)
                 case "--checksums": checksumsFile = try Self.value(argument, &rest)
+                case "--key-id": keyID = try Self.value(argument, &rest)
+                case "--issuer-id": issuerID = try Self.value(argument, &rest)
+                case "--p8": p8 = try Self.value(argument, &rest)
                 default: throw ToolError.refused("Unknown option \(argument). Run `xcflow help` for the options.")
                 }
             }
@@ -49,10 +58,17 @@ enum RepoSetup {
     }
 
     @discardableResult
-    static func run(arguments: [String], client: AppStoreConnectClient? = nil, releaseChecksums: @Sendable (String) async -> String? = releaseChecksums) async throws -> [String] {
+    static func run(
+        arguments: [String],
+        client: AppStoreConnectClient? = nil,
+        releaseChecksums: @Sendable (String) async -> String? = releaseChecksums,
+        secrets: any SecretStore = GitHubSecrets(),
+        interactive: Bool = isatty(STDIN_FILENO) == 1
+    ) async throws -> [String] {
         let options = try Options(arguments: arguments)
         let root = try options.repo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? gitRoot()
-        let prompt = Prompt(yes: options.yes, dryRun: options.dryRun)
+        let prompt = Prompt(yes: options.yes, dryRun: options.dryRun, interactive: interactive)
+        let pem = try options.p8.map(readTeamKey)
         let workflows = root.appending(path: "XcodeCloud")
         let rootPath = root.standardizedFileURL.path(percentEncoded: false).replacing(/\/$/, with: "")
         print(options.dryRun ? "Dry run of xcflow setup in \(rootPath). Nothing is written or sent.\n" : "Setting up xcflow in \(rootPath).\n")
@@ -78,14 +94,16 @@ enum RepoSetup {
         if options.skipSecrets {
             todo.append("Make sure the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets are set on the GitHub repo. Skipped with --skip-secrets.")
         } else if options.dryRun {
-            print("Would check the repo's GitHub secrets, and offer to set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT if any are missing.")
+            print(options.hasWholeKey
+                ? "Would check the repo's GitHub secrets, and set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT from the given key if any are missing."
+                : "Would check the repo's GitHub secrets, and offer to set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT if any are missing.")
         } else {
-            let decision = SecretsDecision(existing: existingSecretNames(in: root), replace: options.replaceSecrets)
+            let decision = SecretsDecision(existing: Result { try secrets.names(in: root) }, replace: options.replaceSecrets)
             print(decision.message)
-            if let question = decision.question, prompt.ask(question) {
-                try setSecrets(in: root, prompt: prompt)
+            if let question = decision.question, options.hasWholeKey || prompt.ask(question) {
+                try setSecrets(in: root, options: options, pem: pem, prompt: prompt, store: secrets)
             } else if decision.question != nil {
-                todo.append("Set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key (base64 of the .p8 for the content).")
+                todo.append("Set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key: `xcflow setup --key-id <id> --issuer-id <id> --p8 <path>`.")
             }
         }
 
@@ -253,21 +271,36 @@ enum RepoSetup {
         }
     }
 
-    private static func existingSecretNames(in root: URL) -> Result<Set<String>, Error> {
-        Result {
-            let output = try run(["gh", "secret", "list", "--json", "name", "--jq", ".[].name"], in: root)
+    /// The repo's GitHub Actions secrets, through `gh`.
+    struct GitHubSecrets: SecretStore {
+        func names(in root: URL) throws -> Set<String> {
+            let output = try RepoSetup.run(["gh", "secret", "list", "--json", "name", "--jq", ".[].name"], in: root)
             return Set(output.split(whereSeparator: \.isNewline).map(String.init))
+        }
+
+        func set(_ name: String, to value: String, in root: URL) throws {
+            try RepoSetup.run(["gh", "secret", "set", name], in: root, input: value)
         }
     }
 
-    private static func setSecrets(in root: URL, prompt: Prompt) throws {
-        guard let keyID = prompt.read("Team key id:"), let issuerID = prompt.read("Issuer id:"), let path = prompt.read("Path to the team key's .p8 file:") else {
-            throw ToolError.refused("The key id, issuer id and .p8 path are all needed to set the secrets.")
+    private static func setSecrets(in root: URL, options: Options, pem: Data?, prompt: Prompt, store: any SecretStore) throws {
+        guard let keyID = options.keyID ?? prompt.read("Team key id:"),
+              let issuerID = options.issuerID ?? prompt.read("Issuer id:"),
+              let pem = try pem ?? prompt.read("Path to the team key's .p8 file:").map(readTeamKey)
+        else {
+            throw ToolError.refused("The key id, issuer id and .p8 path are all needed to set the secrets. Pass --key-id, --issuer-id and --p8, or run setup in a terminal to be asked for them.")
         }
-        let pem = try Data(contentsOf: URL(filePath: (path as NSString).expandingTildeInPath))
         for (name, value) in [("ASC_KEY_ID", keyID), ("ASC_ISSUER_ID", issuerID), ("ASC_KEY_CONTENT", pem.base64EncodedString())] {
-            try run(["gh", "secret", "set", name], in: root, input: value)
+            try store.set(name, to: value, in: root)
             print("Set the \(name) secret.")
+        }
+    }
+
+    private static func readTeamKey(at path: String) throws -> Data {
+        do {
+            return try Data(contentsOf: URL(filePath: (path as NSString).expandingTildeInPath))
+        } catch {
+            throw ToolError.refused("Couldn't read the team key at \(path): \(error.localizedDescription)")
         }
     }
 
@@ -303,14 +336,21 @@ enum RepoSetup {
     }
 }
 
+/// Where the repo's GitHub secrets live. Tests swap in a fake; the tool uses `gh`.
+protocol SecretStore {
+    func names(in root: URL) throws -> Set<String>
+    func set(_ name: String, to value: String, in root: URL) throws
+}
+
 struct Prompt {
     let yes: Bool
     let dryRun: Bool
-    private let interactive = isatty(STDIN_FILENO) == 1
+    let interactive: Bool
 
-    init(yes: Bool, dryRun: Bool) {
+    init(yes: Bool, dryRun: Bool, interactive: Bool = isatty(STDIN_FILENO) == 1) {
         self.yes = yes
         self.dryRun = dryRun
+        self.interactive = interactive
     }
 
     func ask(_ question: String) -> Bool {
