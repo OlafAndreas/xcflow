@@ -22,7 +22,7 @@ case "--version", "version":
 case "auth":
     await runOrExit("auth") { try await Auth.run(arguments: Array(arguments.dropFirst())) }
 case "setup":
-    await runOrExit("setup") { try await RepoSetup.run(arguments: Array(arguments.dropFirst())) }
+    await runOrExit("setup") { _ = try await RepoSetup.run(arguments: Array(arguments.dropFirst())) }
 case "get" where arguments.count >= 2:
     await runOrExit("get") {
         let client = AppStoreConnectClient(tokens: try TokenProvider(credentials: try CredentialStore.load()))
