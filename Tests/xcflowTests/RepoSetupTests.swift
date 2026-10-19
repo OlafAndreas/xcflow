@@ -43,6 +43,17 @@ struct RepoSetupTests {
         #expect(files(in: root).isEmpty)
     }
 
+    @Test func dryRunFetchesTheReleaseChecksums() async throws {
+        let root = try makeRepo()
+        let published = checksums.map { "\($0.value)  \($0.key)" }.joined(separator: "\n")
+        let todo = try await RepoSetup.run(
+            arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--dry-run"],
+            releaseChecksums: { version in version == Version.current ? published : nil }
+        )
+        #expect(!todo.contains { $0.contains("Missing") })
+        #expect(files(in: root).isEmpty)
+    }
+
     @Test func setupWritesEveryFileAndIsIdempotent() async throws {
         let root = try makeRepo(mcp: #"{"mcpServers":{"other":{"type":"stdio","command":"other"}}}"#)
         try await setup(root)

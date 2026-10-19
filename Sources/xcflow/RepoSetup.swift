@@ -49,7 +49,7 @@ enum RepoSetup {
     }
 
     @discardableResult
-    static func run(arguments: [String], client: AppStoreConnectClient? = nil) async throws -> [String] {
+    static func run(arguments: [String], client: AppStoreConnectClient? = nil, releaseChecksums: @Sendable (String) async -> String? = releaseChecksums) async throws -> [String] {
         let options = try Options(arguments: arguments)
         let root = try options.repo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? gitRoot()
         let prompt = Prompt(yes: options.yes, dryRun: options.dryRun)
@@ -61,8 +61,8 @@ enum RepoSetup {
         try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, todo: &todo)
 
         var checksumsText = try options.checksumsFile.map { try String(contentsOf: URL(filePath: $0), encoding: .utf8) }
-        if checksumsText == nil, !options.dryRun {
-            checksumsText = await releaseChecksums(version: Version.current)
+        if checksumsText == nil {
+            checksumsText = await releaseChecksums(Version.current)
         }
         let checksums = checksumsText.map(parseChecksums) ?? [:]
         let unverified = Templates.archives(version: Version.current).values.filter { checksums[$0] == nil }.sorted()
@@ -199,7 +199,7 @@ enum RepoSetup {
 
     // MARK: - Outside services
 
-    private static func releaseChecksums(version: String) async -> String? {
+    @Sendable private static func releaseChecksums(_ version: String) async -> String? {
         guard !version.contains("-"),
               let url = URL(string: "https://github.com/OlafAndreas/xcflow/releases/download/v\(version)/checksums.txt"),
               let (data, response) = try? await URLSession.shared.data(from: url),
