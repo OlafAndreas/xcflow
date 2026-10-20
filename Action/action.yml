@@ -1,5 +1,5 @@
 name: Install xcflow
-description: Installs xcflow, which keeps your Xcode Cloud workflows as JSON files in the repo. Review changes in pull requests, apply them on merge, catch drift nightly.
+description: "Installs xcflow: Xcode Cloud workflows as JSON in your repo. Review in pull requests, apply on merge, catch drift nightly."
 author: Olaf Andreas Øvrum
 branding:
   icon: code
