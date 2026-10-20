@@ -90,6 +90,15 @@ enum RepoSetup {
             let status = try write(file, in: root, force: options.force, dryRun: options.dryRun, prompt: prompt)
             print(describe(file.path, status, dryRun: options.dryRun))
         }
+        switch try LegacyAction.remove(in: root, force: options.force, dryRun: options.dryRun) {
+        case .removed:
+            print("\(options.dryRun ? "Would remove" : "Removed") \(LegacyAction.path), replaced by \(ActionPin.repository)")
+        case .kept:
+            print("Kept \(LegacyAction.path), which differs from xcflow's version")
+            todo.append("Remove `.github/actions/xcflow/`; the workflows now install xcflow from `\(ActionPin.repository)`.")
+        case .absent:
+            break
+        }
         print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
         let dependabot = try mergeDependabot(in: root, dryRun: options.dryRun)
         print(describe(".github/dependabot.yml", dependabot, dryRun: options.dryRun))

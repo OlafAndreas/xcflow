@@ -391,4 +391,41 @@ struct RepoSetupTests {
             return error.localizedDescription
         }
     }
+
+    private func writeLegacyAction(in root: URL, edited: Bool = false) throws {
+        let url = root.appending(path: LegacyAction.path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let content = LegacyAction.render(version: "0.2.6", checksums: ["xcflow-0.2.6-linux-x86_64.tar.gz": String(repeating: "1", count: 64), "xcflow-0.2.6-linux-aarch64.tar.gz": String(repeating: "2", count: 64)])
+        try (edited ? content + "# edited\n" : content).write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    @Test func setupRemovesAnUntouchedLegacyAction() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: ".github/actions").path(percentEncoded: false)))
+        #expect(!todo.contains { $0.contains(".github/actions/xcflow") })
+    }
+
+    @Test func setupKeepsAnEditedLegacyActionWithATodo() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root, edited: true)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false)))
+        #expect(todo.contains { $0.hasPrefix("Remove `.github/actions/xcflow/`") })
+    }
+
+    @Test func forceRemovesAnEditedLegacyAction() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root, edited: true)
+        _ = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--force"])
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false)))
+    }
+
+    @Test func dryRunLeavesTheLegacyAction() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root)
+        _ = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--dry-run"])
+        #expect(FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false)))
+    }
 }
