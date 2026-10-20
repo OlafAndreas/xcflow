@@ -23,6 +23,24 @@ struct RepoSetupTests {
             .sorted()
     }
 
+    /// Stands in for the Keychain; starts empty or with one stored key.
+    final class FakeKeys: KeyStore, @unchecked Sendable {
+        var stored: Credentials?
+
+        init(_ stored: Credentials? = nil) {
+            self.stored = stored
+        }
+
+        func load() throws -> Credentials {
+            guard let stored else { throw CredentialError.missing }
+            return stored
+        }
+
+        func save(_ credentials: Credentials) throws {
+            stored = credentials
+        }
+    }
+
     /// Stands in for `gh secret`; records what setup would have set.
     final class FakeSecrets: SecretStore, @unchecked Sendable {
         var existing: Set<String>
@@ -50,16 +68,17 @@ struct RepoSetupTests {
 
     /// Runs setup with the secrets step live against `secrets`, never interactive, so no test can block on a prompt.
     @discardableResult
-    private func setupSecrets(_ root: URL, _ extra: [String], secrets: FakeSecrets) async throws -> [String] {
+    private func setupSecrets(_ root: URL, _ extra: [String], secrets: FakeSecrets, keys: FakeKeys = FakeKeys()) async throws -> [String] {
         try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--action-sha", sha] + extra,
             secrets: secrets,
+            keys: keys,
             interactive: false
         )
     }
 
     private func setup(_ root: URL, _ extra: [String] = []) async throws {
-        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--action-sha", sha] + extra, interactive: false)
+        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--action-sha", sha] + extra, keys: FakeKeys(), interactive: false)
     }
 
     private func setupError(_ root: URL, _ extra: [String]) async -> String {
@@ -141,7 +160,7 @@ struct RepoSetupTests {
         let root = try makeRepo()
         let todo = try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--dry-run"],
-            resolveActionCommit: { version in version == Version.current ? sha : nil })
+            resolveActionCommit: { version in version == Version.current ? sha : nil }, keys: FakeKeys())
         #expect(!todo.contains { $0.contains("Pin `OlafAndreas/xcflow-action`") })
         #expect(files(in: root).isEmpty)
     }
@@ -150,7 +169,7 @@ struct RepoSetupTests {
         let root = try makeRepo()
         let todo = try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets"],
-            resolveActionCommit: { _ in nil })
+            resolveActionCommit: { _ in nil }, keys: FakeKeys())
         let text = try String(contentsOf: root.appending(path: ".github/workflows/xcflow-plan.yml"), encoding: .utf8)
         #expect(text.contains("uses: OlafAndreas/xcflow-action@v\(Version.current)\n"))
         #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action` to its commit for v\(Version.current)") })
@@ -179,7 +198,7 @@ struct RepoSetupTests {
 
     @Test func setupWritesEveryFileAndIsIdempotent() async throws {
         let root = try makeRepo(mcp: #"{"mcpServers":{"other":{"type":"stdio","command":"other"}}}"#)
-        try await setup(root)
+        try await setup(root, ["--mcp"])
         #expect(files(in: root) == [
             ".claude/rules/xcode-cloud.md",
             ".claude/skills/edit-xcode-cloud-workflow/SKILL.md",
@@ -294,8 +313,8 @@ struct RepoSetupTests {
         #expect(decision.question != nil)
     }
 
-    private func setupTodo(_ root: URL, _ extra: [String], client: AppStoreConnectClient? = nil) async throws -> [String] {
-        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--skip-secrets", "--action-sha", sha] + extra, client: client, interactive: false)
+    private func setupTodo(_ root: URL, _ extra: [String], client: AppStoreConnectClient? = nil, keys: FakeKeys = FakeKeys()) async throws -> [String] {
+        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--skip-secrets", "--action-sha", sha] + extra, client: client, keys: keys, interactive: false)
     }
 
     @Test func setupWithoutAManifestExplainsTheFirstTimeSetupAndStillWritesTheFiles() async throws {
@@ -378,14 +397,16 @@ struct RepoSetupTests {
         let root = try makeRepo()
         let key = try writeKey()
         let secrets = FakeSecrets()
-        try await setupSecrets(root, ["--dry-run", "--key-id", "ABC123", "--issuer-id", "issuer", "--p8", key.path], secrets: secrets)
+        let keys = FakeKeys()
+        try await setupSecrets(root, ["--dry-run", "--key-id", "ABC123", "--issuer-id", "issuer", "--p8", key.path], secrets: secrets, keys: keys)
         #expect(secrets.set.isEmpty)
+        #expect(keys.stored == nil)
         #expect(files(in: root).isEmpty)
     }
 
-    private func setupSecretsError(_ root: URL, _ extra: [String], secrets: FakeSecrets) async -> String {
+    private func setupSecretsError(_ root: URL, _ extra: [String], secrets: FakeSecrets, keys: FakeKeys = FakeKeys()) async -> String {
         do {
-            try await setupSecrets(root, extra, secrets: secrets)
+            try await setupSecrets(root, extra, secrets: secrets, keys: keys)
             return "no error"
         } catch {
             return error.localizedDescription
@@ -513,5 +534,76 @@ struct RepoSetupTests {
             #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yaml"), encoding: .utf8) == existing)
             #expect(todo.contains { $0.hasPrefix("Add an entry to `.github/dependabot.yaml`") } == todoExpected)
         }
+    }
+
+    // MARK: - One key for everything
+
+    private let teamPEM = "-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49\n-----END PRIVATE KEY-----\n"
+
+    @Test func setupStoresTheKeyFromTheFlagsAndUsesItForTheExportAndTheSecrets() async throws {
+        let root = try makeRepo()
+        try Fixtures.writeManifest(in: root, project: "Example.xcodeproj", productIDs: ["<ciProducts: com.example.app>"])
+        let server = try DryRunServer(snapshot: try Fixtures.standard(), desired: root.appending(path: "XcodeCloud"))
+        let key = try writeKey()
+        let keys = FakeKeys()
+        let secrets = FakeSecrets()
+        let todo = try await RepoSetup.run(
+            arguments: ["--repo", root.path(percentEncoded: false), "--yes", "--action-sha", sha, "--key-id", "ABC123", "--issuer-id", "issuer-1", "--p8", key.path],
+            client: AppStoreConnectClient(dryRun: server), secrets: secrets, keys: keys, interactive: false)
+        #expect(keys.stored?.keyID == "ABC123")
+        #expect(keys.stored?.issuerID == "issuer-1")
+        #expect(secrets.set["ASC_KEY_ID"] == "ABC123")
+        #expect(secrets.set["ASC_KEY_CONTENT"] == key.base64)
+        #expect(files(in: root).contains("XcodeCloud/com.example.app/nightly-tests.json"))
+        #expect(todo.last?.contains("commit") == true)
+    }
+
+    @Test func setupWithoutAnyKeySkipsTheExportAndSaysWhatToPass() async throws {
+        let root = try makeRepo()
+        try Fixtures.writeManifest(in: root, project: "Example.xcodeproj", productIDs: ["<ciProducts: com.example.app>"])
+        let todo = try await setupTodo(root, [])
+        #expect(files(in: root).contains(".github/workflows/xcflow-plan.yml"))
+        #expect(!files(in: root).contains { $0.hasPrefix("XcodeCloud/com.example.app/") })
+        #expect(todo.contains { $0.contains("--key-id") && $0.contains("xcflow export") })
+    }
+
+    @Test func setupUsesAStoredTeamKeyForTheSecretsWhenAsked() async throws {
+        let root = try makeRepo()
+        let keys = FakeKeys(Credentials(keyID: "TEAM1", privateKeyPEM: teamPEM, issuerID: "issuer-1"))
+        let secrets = FakeSecrets()
+        try await setupSecrets(root, ["--yes"], secrets: secrets, keys: keys)
+        #expect(secrets.set == ["ASC_KEY_ID": "TEAM1", "ASC_ISSUER_ID": "issuer-1", "ASC_KEY_CONTENT": Data(teamPEM.utf8).base64EncodedString()])
+    }
+
+    @Test func setupWithAStoredPersonalKeyStillNeedsATeamKeyForTheSecrets() async throws {
+        let root = try makeRepo()
+        let keys = FakeKeys(Credentials(keyID: "ME", privateKeyPEM: teamPEM))
+        let secrets = FakeSecrets()
+        let message = await setupSecretsError(root, ["--yes"], secrets: secrets, keys: keys)
+        #expect(message.contains("--issuer-id"))
+        #expect(secrets.set.isEmpty)
+    }
+
+    @Test func setupEndsWithTheCommitStepExceptInADryRun() async throws {
+        let root = try makeRepo()
+        let real = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(real.last?.contains("commit") == true && real.last?.contains("pull request") == true)
+        let dry = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--dry-run"])
+        #expect(!dry.contains { $0.contains("commit") })
+    }
+
+    @Test func theMCPEntryIsOptIn() async throws {
+        let plain = try makeRepo()
+        try await setup(plain)
+        #expect(!files(in: plain).contains(".mcp.json"))
+
+        let existing = #"{"mcpServers":{"other":{"type":"stdio","command":"other"}}}"#
+        let withOther = try makeRepo(mcp: existing)
+        try await setup(withOther)
+        #expect(try String(contentsOf: withOther.appending(path: ".mcp.json"), encoding: .utf8) == existing)
+
+        try await setup(withOther, ["--mcp"])
+        let servers = (try JSONSerialization.jsonObject(with: Data(contentsOf: withOther.appending(path: ".mcp.json"))) as? JSON)?["mcpServers"] as? JSON
+        #expect(servers?.keys.sorted() == ["other", "xcflow"])
     }
 }

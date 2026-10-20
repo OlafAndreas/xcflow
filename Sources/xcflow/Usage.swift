@@ -3,10 +3,11 @@ enum Usage {
     xcflow \(Version.current): Xcode Cloud workflows as JSON files in your repo.
 
     Usage: xcflow <command>
-      setup [--dry-run] [--yes] [--force] [--products <bundle id,…>] [--skip-export] [--skip-secrets] [--replace-secrets]
+      setup [--dry-run] [--yes] [--force] [--products <bundle id,…>] [--skip-export] [--skip-secrets] [--replace-secrets] [--mcp]
             [--key-id <id> --issuer-id <id> --p8 <path>] [--action-sha <sha>]
-                                        Add the workflow files, GitHub Actions, Claude skill and rule, and MCP entry to this repo.
-                                        With the team key's id, issuer id and .p8, set the GitHub secrets without asking.
+                                        Add the workflow files, GitHub Actions, and Claude skill and rule to this repo; --mcp adds the MCP entry.
+                                        One team key does it all: kept for xcflow, used for the export, set as the GitHub secrets.
+                                        Asked for in a terminal when none is stored, or given with the three flags.
       auth --key-id <KEY_ID> --p8 <path> Store your App Store Connect API key in the Keychain.
       plan [--dry-run <folder>]         Validate XcodeCloud/ and show what would change in Xcode Cloud.
       apply [--dry-run <folder>]        Make those changes. The GitHub Action runs this on the default branch.

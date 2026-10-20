@@ -29,17 +29,16 @@ Homebrew installs the macOS build. Each release also has Linux builds for x86_64
 
 Xcode Cloud has to be switched on for the app first: create its first workflow in Xcode (**Product → Xcode Cloud → Create Workflow…**) or in App Store Connect. That step also connects the repository, and the App Store Connect API can't do either. Xcode then records the product in `<project>.xcodeproj/xcshareddata/xcodecloud/manifest.json`; commit that file, because it is how `setup` and `export` find the products to manage.
 
-1. Create an App Store Connect API key for yourself: your profile (top right) → **Edit Profile** → **Individual API Key** → **Generate API Key**. Then store it in your Keychain:
+1. Have a team App Store Connect API key: **Users and Access → Integrations → Team Keys → Generate API Key**, with the Admin role or App Manager with access to Xcode Cloud. Download the `.p8` and note the key id and the issuer id. One key serves everything: `setup` keeps it in your Keychain for xcflow's own use, exports the workflows with it, and sets it as the repo's GitHub secrets for CI.
 
-   ```bash
-   xcflow auth --key-id <KEY_ID> --p8 ~/Downloads/AuthKey_<KEY_ID>.p8
-   ```
+   Rather use a personal key on your own machine? Store it first with `xcflow auth --key-id <KEY_ID> --p8 <path>`; `setup` then still asks for a team key for the secrets.
 
 2. From the repo root, run:
 
    ```bash
    xcflow setup --dry-run   # see what it would add
-   xcflow setup
+   xcflow setup             # asks for the team key when none is stored
+   xcflow setup --key-id <KEY_ID> --issuer-id <ISSUER_ID> --p8 ~/Downloads/AuthKey_<KEY_ID>.p8   # no questions: scripts and agents
    ```
 
    `setup` asks before each step that calls App Store Connect or GitHub, and never overwrites a changed file without asking. It adds:
@@ -48,8 +47,10 @@ Xcode Cloud has to be switched on for the app first: create its first workflow i
    - `.github/workflows/xcflow-plan.yml`, `xcflow-apply.yml` and `xcflow-sync.yml`, running on `ubuntu-latest` and installing xcflow from `OlafAndreas/xcflow-action`, pinned to a commit.
    - `.github/dependabot.yml`, so Dependabot opens a pull request when a new xcflow is out. The plan check doesn't run on those pull requests, because they can't read the repo's secrets; the bump merges on the strength of xcflow's own release checks, and the nightly sync is the first run of the new version in that repo.
    - `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files.
-   - An `xcflow` entry in `.mcp.json`.
-   - Optionally, the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key. `setup` checks first and skips this step when all three are already set; `--replace-secrets` sets them again. In a terminal it asks for the key id, issuer id and `.p8` path; pass `--key-id`, `--issuer-id` and `--p8` to set them without being asked, which is what an agent or a script needs. The key's role must be allowed to edit Xcode Cloud workflows: Admin, or App Manager with Xcode Cloud access.
+   - With `--mcp`, an `xcflow` entry in `.mcp.json`, so Claude Code and other MCP clients can read Xcode Cloud through xcflow.
+   - The `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from the team key. `setup` checks first and skips this step when all three are already set; `--replace-secrets` sets them again.
+
+   When it's done, review the new files with `git status`, commit them and open a pull request. The plan check posts what would change in Xcode Cloud, and the repo is ready.
 
    Run it again at any time; files that already match are left alone, and a newer pin that Dependabot made is kept.
 

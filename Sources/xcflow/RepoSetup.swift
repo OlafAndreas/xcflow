@@ -12,6 +12,7 @@ enum RepoSetup {
         var skipExport = false
         var skipSecrets = false
         var replaceSecrets = false
+        var mcp = false
         var repo: String?
         var actionSHA: String?
         var keyID: String?
@@ -31,6 +32,7 @@ enum RepoSetup {
                 case "--skip-export": skipExport = true
                 case "--skip-secrets": skipSecrets = true
                 case "--replace-secrets": replaceSecrets = true
+                case "--mcp": mcp = true
                 case "--products": products = try Self.value(argument, &rest).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 case "--repo": repo = try Self.value(argument, &rest)
                 case "--action-sha":
@@ -68,18 +70,33 @@ enum RepoSetup {
         client: AppStoreConnectClient? = nil,
         resolveActionCommit: @Sendable (String) -> String? = resolveActionCommit,
         secrets: any SecretStore = GitHubSecrets(),
+        keys: any KeyStore = KeychainKeyStore(),
         interactive: Bool = isatty(STDIN_FILENO) == 1
     ) async throws -> [String] {
         let options = try Options(arguments: arguments)
         let root = try options.repo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? gitRoot()
         let prompt = Prompt(yes: options.yes, dryRun: options.dryRun, interactive: interactive)
-        let pem = try options.p8.map(readTeamKey)
+        var key = try options.hasWholeKey ? askForTeamKey(options, prompt: prompt) : nil
         let workflows = root.appending(path: "XcodeCloud")
         let rootPath = root.standardizedFileURL.path(percentEncoded: false).replacing(/\/$/, with: "")
         print(options.dryRun ? "Dry run of xcflow setup in \(rootPath). Nothing is written or sent.\n" : "Setting up xcflow in \(rootPath).\n")
 
+        // One team key does everything: the export now, xcflow on this machine, and the GitHub secrets.
+        let stored = try? keys.load()
+        if key == nil, stored == nil {
+            if options.dryRun {
+                print("Would ask for a team App Store Connect API key, since none is stored, and keep it in the Keychain.\n")
+            } else if interactive {
+                print(teamKeyIntro)
+                key = try askForTeamKey(options, prompt: prompt)
+            }
+        }
+        if let key, !options.dryRun {
+            try keys.save(key.credentials)
+            print("Stored key \(key.keyID) in the Keychain for xcflow's own use.\n")
+        }
         var todo: [String] = []
-        try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, todo: &todo)
+        try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, credentials: key?.credentials ?? stored, todo: &todo)
 
         let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))
         var keptTagPins: [String] = []
@@ -120,7 +137,9 @@ enum RepoSetup {
         if !stillUsing.isEmpty {
             todo.append("Install xcflow from `\(ActionPin.repository)` in \(stillUsing.joined(separator: ", ")) (run `xcflow setup --yes` for the generated workflows), then remove `.github/actions/xcflow/`.")
         }
-        print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
+        if options.mcp {
+            print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
+        }
         let dependabotPath = dependabotConfigPath(in: root)
         let dependabot = try mergeDependabot(in: root, dryRun: options.dryRun)
         print(describe(dependabotPath, dependabot, dryRun: options.dryRun))
@@ -131,20 +150,32 @@ enum RepoSetup {
         if options.skipSecrets {
             todo.append("Make sure the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets are set on the GitHub repo. Skipped with --skip-secrets.")
         } else if options.dryRun {
-            print(options.hasWholeKey
+            print(key != nil
                 ? "Would check the repo's GitHub secrets, and set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT from the given key if any are missing."
                 : "Would check the repo's GitHub secrets, and offer to set ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_CONTENT if any are missing.")
         } else {
             let decision = SecretsDecision(existing: Result { try secrets.names(in: root) }, replace: options.replaceSecrets)
             print(decision.message)
-            if let question = decision.question, options.hasWholeKey || prompt.ask(question) {
-                try setSecrets(in: root, options: options, pem: pem, prompt: prompt, store: secrets)
-            } else if decision.question != nil {
-                todo.append("Set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key: `xcflow setup --key-id <id> --issuer-id <id> --p8 <path>`.")
+            if let question = decision.question {
+                if let key {
+                    try setSecrets(in: root, key: key, store: secrets)
+                } else if let stored, let issuerID = stored.issuerID, prompt.ask("Set them from the stored key \(stored.keyID)?") {
+                    try setSecrets(in: root, key: TeamKey(keyID: stored.keyID, issuerID: issuerID, pem: Data(stored.privateKeyPEM.utf8)), store: secrets)
+                } else if prompt.ask(question) {
+                    guard let asked = try askForTeamKey(options, prompt: prompt) else {
+                        throw ToolError.refused("The key id, issuer id and .p8 path are all needed to set the secrets. Pass --key-id, --issuer-id and --p8, or run setup in a terminal to be asked for them.")
+                    }
+                    try setSecrets(in: root, key: asked, store: secrets)
+                } else {
+                    todo.append("Set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from a team API key: `xcflow setup --key-id <id> --issuer-id <id> --p8 <path>`.")
+                }
             }
         }
 
         todo.append("Check that the team key's role can edit Xcode Cloud workflows: Admin, or App Manager with Xcode Cloud access.")
+        if !options.dryRun {
+            todo.append("Review the new files with `git status`, commit them and open a pull request. The plan check posts what would change in Xcode Cloud.")
+        }
         print("\nStill to do:")
         print(todo.map { "- \($0)" }.joined(separator: "\n"))
         return todo
@@ -254,7 +285,7 @@ enum RepoSetup {
     }
 
     /// Exports the products' workflows into XcodeCloud/, or says what stands in the way. Setup carries on either way, so the repo is ready the moment the product exists.
-    private static func exportProducts(_ options: Options, root: URL, workflows: URL, prompt: Prompt, client: AppStoreConnectClient?, todo: inout [String]) async throws {
+    private static func exportProducts(_ options: Options, root: URL, workflows: URL, prompt: Prompt, client: AppStoreConnectClient?, credentials: Credentials?, todo: inout [String]) async throws {
         let existing = existingProducts(in: workflows)
         let products = options.products ?? existing
         let bundleIDs: [String]
@@ -284,9 +315,12 @@ enum RepoSetup {
             todo.append("Export the workflows of \(described) with `\(command)`.")
         } else if options.dryRun {
             print("Would export the live workflows of \(described) from App Store Connect.")
+        } else if client == nil, credentials == nil {
+            print("No App Store Connect API key is stored, so the workflows weren't exported. Pass --key-id, --issuer-id and --p8 with a team key, or run `xcflow auth` first.", terminator: "\n\n")
+            todo.append("Store a team key with `xcflow setup --key-id <id> --issuer-id <id> --p8 <path>` (or `xcflow auth`), then run `\(command)`.")
         } else if prompt.ask("Export the live workflows of \(described) from App Store Connect into XcodeCloud/?") {
             do {
-                let client = try client ?? AppStoreConnectClient(tokens: TokenProvider(credentials: CredentialStore.load()))
+                let client = try client ?? AppStoreConnectClient(tokens: TokenProvider(credentials: credentials!))
                 print(try await WorkflowSync(client: client, root: workflows).export(bundleIDs: bundleIDs))
             } catch {
                 print("Export failed: \(error.localizedDescription)", terminator: "\n\n")
@@ -348,14 +382,35 @@ enum RepoSetup {
         }
     }
 
-    private static func setSecrets(in root: URL, options: Options, pem: Data?, prompt: Prompt, store: any SecretStore) throws {
+    /// An App Store Connect team API key: what the GitHub secrets hold, and what xcflow itself uses.
+    struct TeamKey {
+        let keyID: String
+        let issuerID: String
+        let pem: Data
+
+        var credentials: Credentials {
+            Credentials(keyID: keyID, privateKeyPEM: String(decoding: pem, as: UTF8.self), issuerID: issuerID)
+        }
+    }
+
+    private static let teamKeyIntro = """
+    No App Store Connect API key is stored. Setup uses one team key: for the export now, for xcflow on this machine, and for the GitHub secrets.
+    Create one in App Store Connect under Users and Access → Integrations → Team Keys, with the Admin role or App Manager with Xcode Cloud access.
+    """
+
+    /// The key from the flags, asking for whatever is missing when there is a terminal. Nil when something is missing and there isn't.
+    private static func askForTeamKey(_ options: Options, prompt: Prompt) throws -> TeamKey? {
         guard let keyID = options.keyID ?? prompt.read("Team key id:"),
               let issuerID = options.issuerID ?? prompt.read("Issuer id:"),
-              let pem = try pem ?? prompt.read("Path to the team key's .p8 file:").map(readTeamKey)
+              let pem = try options.p8.map(readTeamKey) ?? prompt.read("Path to the team key's .p8 file:").map(readTeamKey)
         else {
-            throw ToolError.refused("The key id, issuer id and .p8 path are all needed to set the secrets. Pass --key-id, --issuer-id and --p8, or run setup in a terminal to be asked for them.")
+            return nil
         }
-        for (name, value) in [("ASC_KEY_ID", keyID), ("ASC_ISSUER_ID", issuerID), ("ASC_KEY_CONTENT", pem.base64EncodedString())] {
+        return TeamKey(keyID: keyID, issuerID: issuerID, pem: pem)
+    }
+
+    private static func setSecrets(in root: URL, key: TeamKey, store: any SecretStore) throws {
+        for (name, value) in [("ASC_KEY_ID", key.keyID), ("ASC_ISSUER_ID", key.issuerID), ("ASC_KEY_CONTENT", key.pem.base64EncodedString())] {
             try store.set(name, to: value, in: root)
             print("Set the \(name) secret.")
         }
