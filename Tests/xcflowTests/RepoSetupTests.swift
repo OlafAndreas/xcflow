@@ -198,7 +198,7 @@ struct RepoSetupTests {
 
     @Test func setupWritesEveryFileAndIsIdempotent() async throws {
         let root = try makeRepo(mcp: #"{"mcpServers":{"other":{"type":"stdio","command":"other"}}}"#)
-        try await setup(root, ["--mcp"])
+        try await setup(root, ["--claude"])
         #expect(files(in: root) == [
             ".claude/rules/xcode-cloud.md",
             ".claude/skills/edit-xcode-cloud-workflow/SKILL.md",
@@ -262,14 +262,14 @@ struct RepoSetupTests {
 
     @Test func changedFilesAreKeptUnlessForced() async throws {
         let root = try makeRepo()
-        try await setup(root)
+        try await setup(root, ["--claude"])
         let rule = root.appending(path: ".claude/rules/xcode-cloud.md")
         try "custom".write(to: rule, atomically: true, encoding: .utf8)
 
-        try await setup(root)
+        try await setup(root, ["--claude"])
         #expect(try String(contentsOf: rule, encoding: .utf8) == "custom")
 
-        try await setup(root, ["--force"])
+        try await setup(root, ["--claude", "--force"])
         #expect(try String(contentsOf: rule, encoding: .utf8) != "custom")
     }
 
@@ -592,17 +592,19 @@ struct RepoSetupTests {
         #expect(!dry.contains { $0.contains("commit") })
     }
 
-    @Test func theMCPEntryIsOptIn() async throws {
+    @Test func theClaudeFilesAndTheMCPEntryAreOptIn() async throws {
         let plain = try makeRepo()
         try await setup(plain)
-        #expect(!files(in: plain).contains(".mcp.json"))
+        #expect(!files(in: plain).contains { $0.hasPrefix(".claude/") || $0 == ".mcp.json" })
 
         let existing = #"{"mcpServers":{"other":{"type":"stdio","command":"other"}}}"#
         let withOther = try makeRepo(mcp: existing)
         try await setup(withOther)
         #expect(try String(contentsOf: withOther.appending(path: ".mcp.json"), encoding: .utf8) == existing)
 
-        try await setup(withOther, ["--mcp"])
+        try await setup(withOther, ["--claude"])
+        #expect(files(in: withOther).contains(".claude/skills/edit-xcode-cloud-workflow/SKILL.md"))
+        #expect(files(in: withOther).contains(".claude/rules/xcode-cloud.md"))
         let servers = (try JSONSerialization.jsonObject(with: Data(contentsOf: withOther.appending(path: ".mcp.json"))) as? JSON)?["mcpServers"] as? JSON
         #expect(servers?.keys.sorted() == ["other", "xcflow"])
     }

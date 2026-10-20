@@ -3,9 +3,9 @@ enum Usage {
     xcflow \(Version.current): Xcode Cloud workflows as JSON files in your repo.
 
     Usage: xcflow <command>
-      setup [--dry-run] [--yes] [--force] [--products <bundle id,…>] [--skip-export] [--skip-secrets] [--replace-secrets] [--mcp]
+      setup [--dry-run] [--yes] [--force] [--products <bundle id,…>] [--skip-export] [--skip-secrets] [--replace-secrets] [--claude]
             [--key-id <id> --issuer-id <id> --p8 <path>] [--action-sha <sha>]
-                                        Add the workflow files, GitHub Actions, and Claude skill and rule to this repo; --mcp adds the MCP entry.
+                                        Add the workflow files and GitHub Actions to this repo. --claude also adds the Claude Code skill, rule and MCP entry.
                                         One team key does it all: kept for xcflow, used for the export, set as the GitHub secrets.
                                         Asked for in a terminal when none is stored, or given with the three flags.
       auth --key-id <KEY_ID> --p8 <path> Store your App Store Connect API key in the Keychain.

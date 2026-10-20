@@ -46,8 +46,7 @@ Xcode Cloud has to be switched on for the app first: create its first workflow i
    - `XcodeCloud/<bundle id>/*.json`: one file per workflow, exported from the products in the project's Xcode Cloud manifest, or from the ones you pass with `--products`, plus a README on the format.
    - `.github/workflows/xcflow-plan.yml`, `xcflow-apply.yml` and `xcflow-sync.yml`, running on `ubuntu-latest` and installing xcflow from `OlafAndreas/xcflow-action`, pinned to a commit.
    - `.github/dependabot.yml`, so Dependabot opens a pull request when a new xcflow is out. The plan check doesn't run on those pull requests, because they can't read the repo's secrets; the bump merges on the strength of xcflow's own release checks, and the nightly sync is the first run of the new version in that repo.
-   - `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files.
-   - With `--mcp`, an `xcflow` entry in `.mcp.json`, so Claude Code and other MCP clients can read Xcode Cloud through xcflow.
+   - With `--claude`: `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files, and an `xcflow` entry in `.mcp.json`, so it can read Xcode Cloud through xcflow.
    - The `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from the team key. `setup` checks first and skips this step when all three are already set; `--replace-secrets` sets them again.
 
    When it's done, review the new files with `git status`, commit them and open a pull request. The plan check posts what would change in Xcode Cloud, and the repo is ready.

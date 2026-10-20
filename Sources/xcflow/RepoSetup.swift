@@ -12,7 +12,7 @@ enum RepoSetup {
         var skipExport = false
         var skipSecrets = false
         var replaceSecrets = false
-        var mcp = false
+        var claude = false
         var repo: String?
         var actionSHA: String?
         var keyID: String?
@@ -32,7 +32,7 @@ enum RepoSetup {
                 case "--skip-export": skipExport = true
                 case "--skip-secrets": skipSecrets = true
                 case "--replace-secrets": replaceSecrets = true
-                case "--mcp": mcp = true
+                case "--claude": claude = true
                 case "--products": products = try Self.value(argument, &rest).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 case "--repo": repo = try Self.value(argument, &rest)
                 case "--action-sha":
@@ -101,7 +101,7 @@ enum RepoSetup {
         let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))
         var keptTagPins: [String] = []
         var rewritten: Set<String> = []
-        for generated in Templates.files(action: pin) {
+        for generated in Templates.files(action: pin) where options.claude || !generated.path.hasPrefix(".claude/") {
             let file = keepingNewerPin(generated, in: root, current: pin, force: options.force)
             let status = try write(file, in: root, force: options.force, dryRun: options.dryRun, prompt: prompt)
             print(describe(file.path, status, dryRun: options.dryRun))
@@ -137,7 +137,7 @@ enum RepoSetup {
         if !stillUsing.isEmpty {
             todo.append("Install xcflow from `\(ActionPin.repository)` in \(stillUsing.joined(separator: ", ")) (run `xcflow setup --yes` for the generated workflows), then remove `.github/actions/xcflow/`.")
         }
-        if options.mcp {
+        if options.claude {
             print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
         }
         let dependabotPath = dependabotConfigPath(in: root)
