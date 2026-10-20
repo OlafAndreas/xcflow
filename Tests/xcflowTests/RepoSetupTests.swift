@@ -6,7 +6,7 @@ struct RepoSetupTests {
     private let checksum = String(repeating: "a", count: 64)
 
     private var checksums: [String: String] {
-        Dictionary(uniqueKeysWithValues: Templates.archives(version: Version.current).values.map { ($0, checksum) })
+        Dictionary(uniqueKeysWithValues: LegacyAction.archives(version: Version.current).values.map { ($0, checksum) })
     }
 
     private func checksumsFile() throws -> String {
@@ -124,24 +124,6 @@ struct RepoSetupTests {
 
         try await setup(root, ["--force"])
         #expect(try String(contentsOf: rule, encoding: .utf8) != "custom")
-    }
-
-    @Test func installActionPicksTheArchiveForTheRunner() {
-        let pinned = Templates.files(version: "1.2.3", checksums: [
-            "xcflow-1.2.3-linux-x86_64.tar.gz": "2" + String(repeating: "0", count: 63),
-            "xcflow-1.2.3-linux-aarch64.tar.gz": "3" + String(repeating: "0", count: 63)
-        ]).first { $0.path == ".github/actions/xcflow/action.yml" }?.content ?? ""
-        #expect(pinned.contains("releases/download/v1.2.3/$NAME"))
-        #expect(pinned.contains(#"Linux-X64) NAME="xcflow-1.2.3-linux-x86_64.tar.gz"; SUM="2"#))
-        #expect(pinned.contains(#"Linux-ARM64) NAME="xcflow-1.2.3-linux-aarch64.tar.gz"; SUM="3"#))
-        #expect(!pinned.contains("macOS-"))
-        #expect(!pinned.contains("xcflow-1.2.3.tar.gz"))
-        #expect(pinned.contains("Linux runners only"))
-        #expect(!pinned.contains("{{"))
-
-        let unpinned = Templates.files(version: "1.2.3", checksums: [:]).first { $0.path == ".github/actions/xcflow/action.yml" }?.content ?? ""
-        #expect(unpinned.contains(#"SUM="" ;;"#))
-        #expect(!unpinned.contains("{{"))
     }
 
     @Test func generatedActionsPinTheCurrentCheckout() {

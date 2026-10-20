@@ -4,22 +4,10 @@ enum Templates {
         let content: String
     }
 
-    static func archives(version: String) -> [String: String] {
-        [
-            "linux-x86_64": "xcflow-\(version)-linux-x86_64.tar.gz",
-            "linux-aarch64": "xcflow-\(version)-linux-aarch64.tar.gz"
-        ]
-    }
-
     static func files(version: String, checksums: [String: String]) -> [File] {
-        var install = installAction.replacingOccurrences(of: "{{version}}", with: version)
-        for (platform, archive) in archives(version: version) {
-            install = install
-                .replacingOccurrences(of: "{{archive-\(platform)}}", with: archive)
-                .replacingOccurrences(of: "{{checksum-\(platform)}}", with: checksums[archive] ?? "")
-        }
+        let install = LegacyAction.render(version: version, checksums: checksums)
         return [
-            File(path: ".github/actions/xcflow/action.yml", content: install),
+            File(path: LegacyAction.path, content: install),
             File(path: ".github/workflows/xcflow-plan.yml", content: planWorkflow),
             File(path: ".github/workflows/xcflow-apply.yml", content: applyWorkflow),
             File(path: ".github/workflows/xcflow-sync.yml", content: syncWorkflow),
@@ -32,33 +20,6 @@ enum Templates {
     static var mcpServer: [String: Any] {
         ["type": "stdio", "command": "xcflow", "args": [String](), "env": [String: String]()]
     }
-
-    private static let installAction = #"""
-    name: Install xcflow
-    description: Installs the pinned xcflow release on a Linux runner. xcflow plans and applies the Xcode Cloud workflows in XcodeCloud/.
-
-    runs:
-      using: composite
-      steps:
-        - name: Install xcflow {{version}}
-          shell: bash
-          run: |
-            case "$RUNNER_OS-$RUNNER_ARCH" in
-              Linux-X64) NAME="{{archive-linux-x86_64}}"; SUM="{{checksum-linux-x86_64}}" ;;
-              Linux-ARM64) NAME="{{archive-linux-aarch64}}"; SUM="{{checksum-linux-aarch64}}" ;;
-              *) echo "::error::This action installs xcflow on Linux runners only, not on $RUNNER_OS $RUNNER_ARCH. Use runs-on: ubuntu-latest."; exit 1 ;;
-            esac
-            ARCHIVE="$RUNNER_TEMP/xcflow.tar.gz"
-            curl -fsSL -o "$ARCHIVE" "https://github.com/OlafAndreas/xcflow/releases/download/v{{version}}/$NAME"
-            if [ -n "$SUM" ]; then
-              echo "$SUM  $ARCHIVE" | shasum -a 256 -c -
-            fi
-            mkdir -p "$RUNNER_TEMP/xcflow"
-            tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP/xcflow"
-            echo "$RUNNER_TEMP/xcflow" >> "$GITHUB_PATH"
-            "$RUNNER_TEMP/xcflow/xcflow" --version
-
-    """#
 
     private static let planWorkflow = #"""
     name: Xcode Cloud plan

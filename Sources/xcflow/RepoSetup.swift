@@ -81,7 +81,7 @@ enum RepoSetup {
             checksumsText = await releaseChecksums(Version.current)
         }
         let checksums = checksumsText.map(parseChecksums) ?? [:]
-        let unverified = Templates.archives(version: Version.current).values.filter { checksums[$0] == nil }.sorted()
+        let unverified = LegacyAction.archives(version: Version.current).values.filter { checksums[$0] == nil }.sorted()
         if !unverified.isEmpty {
             todo.append("Add the release checksums to `.github/actions/xcflow/action.yml`, so CI verifies the download. Missing: \(unverified.joined(separator: ", ")).")
         }
