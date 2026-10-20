@@ -1,3 +1,6 @@
 .build/
 .swiftpm/
 .DS_Store
+
+# Working documents from design sessions stay local.
+docs/superpowers/
