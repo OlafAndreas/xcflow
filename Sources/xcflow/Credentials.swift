@@ -114,3 +114,22 @@ private extension CredentialError {
         #endif
     }
 }
+
+/// Where xcflow's own App Store Connect key lives. `setup` reads it to export and writes the key it is given; tests swap in a fake.
+protocol KeyStore {
+    func load() throws -> Credentials
+    func save(_ credentials: Credentials) throws
+}
+
+/// The environment variables, then the Keychain, as every command reads them.
+struct KeychainKeyStore: KeyStore {
+    func load() throws -> Credentials { try CredentialStore.load() }
+
+    func save(_ credentials: Credentials) throws {
+        #if canImport(Security)
+        try CredentialStore.save(credentials)
+        #else
+        throw CredentialError.noKeychain
+        #endif
+    }
+}
