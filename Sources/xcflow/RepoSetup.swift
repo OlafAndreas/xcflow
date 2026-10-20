@@ -13,7 +13,7 @@ enum RepoSetup {
         var skipSecrets = false
         var replaceSecrets = false
         var repo: String?
-        var checksumsFile: String?
+        var actionSHA: String?
         var keyID: String?
         var issuerID: String?
         var p8: String?
@@ -33,7 +33,12 @@ enum RepoSetup {
                 case "--replace-secrets": replaceSecrets = true
                 case "--products": products = try Self.value(argument, &rest).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 case "--repo": repo = try Self.value(argument, &rest)
-                case "--checksums": checksumsFile = try Self.value(argument, &rest)
+                case "--action-sha":
+                    let sha = try Self.value(argument, &rest)
+                    guard sha.wholeMatch(of: /[0-9a-f]{40}/) != nil else {
+                        throw ToolError.refused("--action-sha must be the 40-character commit sha of \(ActionPin.repository).")
+                    }
+                    actionSHA = sha
                 case "--key-id": keyID = try Self.value(argument, &rest)
                 case "--issuer-id": issuerID = try Self.value(argument, &rest)
                 case "--p8": p8 = try Self.value(argument, &rest)
@@ -61,7 +66,7 @@ enum RepoSetup {
     static func run(
         arguments: [String],
         client: AppStoreConnectClient? = nil,
-        releaseChecksums: @Sendable (String) async -> String? = releaseChecksums,
+        resolveActionCommit: @Sendable (String) -> String? = resolveActionCommit,
         secrets: any SecretStore = GitHubSecrets(),
         interactive: Bool = isatty(STDIN_FILENO) == 1
     ) async throws -> [String] {
@@ -76,20 +81,52 @@ enum RepoSetup {
         var todo: [String] = []
         try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, todo: &todo)
 
-        var checksumsText = try options.checksumsFile.map { try String(contentsOf: URL(filePath: $0), encoding: .utf8) }
-        if checksumsText == nil {
-            checksumsText = await releaseChecksums(Version.current)
-        }
-        let checksums = checksumsText.map(parseChecksums) ?? [:]
-        let unverified = Templates.archives(version: Version.current).values.filter { checksums[$0] == nil }.sorted()
-        if !unverified.isEmpty {
-            todo.append("Add the release checksums to `.github/actions/xcflow/action.yml`, so CI verifies the download. Missing: \(unverified.joined(separator: ", ")).")
-        }
-        for file in Templates.files(version: Version.current, checksums: checksums) {
+        let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))
+        var keptTagPins: [String] = []
+        var rewritten: Set<String> = []
+        for generated in Templates.files(action: pin) {
+            let file = keepingNewerPin(generated, in: root, current: pin, force: options.force)
             let status = try write(file, in: root, force: options.force, dryRun: options.dryRun, prompt: prompt)
             print(describe(file.path, status, dryRun: options.dryRun))
+            if status == .created || status == .overwritten {
+                rewritten.insert(file.path)
+            } else if status == .keptDifferent, pin.commit != nil,
+                      let text = try? String(contentsOf: root.appending(path: file.path), encoding: .utf8),
+                      let existing = ActionPin.parse(text), existing.commit == nil {
+                keptTagPins.append(file.path)
+            }
+        }
+        if pin.commit == nil {
+            todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in the three workflows once the tag exists; the lookup failed (offline, or not released yet).")
+        } else if !keptTagPins.isEmpty {
+            todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in \(keptTagPins.joined(separator: ", ")), which still reference the tag: run `xcflow setup --yes`.")
+        }
+        // A workflow that still installs xcflow from the local action would break without it, so the action stays unless --force.
+        let hasLegacyAction = FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false))
+        let stillUsing = hasLegacyAction ? workflowsUsingLegacyAction(in: root).subtracting(rewritten).sorted() : []
+        if !stillUsing.isEmpty, !options.force {
+            print("Kept \(LegacyAction.path); still used by \(stillUsing.joined(separator: ", "))")
+        } else {
+            switch try LegacyAction.remove(in: root, force: options.force, dryRun: options.dryRun) {
+            case .removed:
+                print("\(options.dryRun ? "Would remove" : "Removed") \(LegacyAction.path), replaced by \(ActionPin.repository)")
+            case .kept:
+                print("Kept \(LegacyAction.path), which differs from xcflow's version")
+                todo.append("Remove `.github/actions/xcflow/`; the workflows now install xcflow from `\(ActionPin.repository)`.")
+            case .absent:
+                break
+            }
+        }
+        if !stillUsing.isEmpty {
+            todo.append("Install xcflow from `\(ActionPin.repository)` in \(stillUsing.joined(separator: ", ")) (run `xcflow setup --yes` for the generated workflows), then remove `.github/actions/xcflow/`.")
         }
         print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
+        let dependabotPath = dependabotConfigPath(in: root)
+        let dependabot = try mergeDependabot(in: root, dryRun: options.dryRun)
+        print(describe(dependabotPath, dependabot, dryRun: options.dryRun))
+        if dependabot == .keptDifferent {
+            todo.append("Add an entry to `\(dependabotPath)` with `package-ecosystem: github-actions`, `directory: /` and a weekly schedule, so Dependabot bumps the xcflow-action pin.")
+        }
 
         if options.skipSecrets {
             todo.append("Make sure the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets are set on the GitHub repo. Skipped with --skip-secrets.")
@@ -115,6 +152,29 @@ enum RepoSetup {
 
     // MARK: - Files
 
+    /// The workflow as it should be written: with the current pin, unless the file already pins a newer version and --force wasn't given.
+    static func keepingNewerPin(_ file: Templates.File, in root: URL, current: ActionPin, force: Bool) -> Templates.File {
+        guard !force, file.path.hasPrefix(".github/workflows/"),
+              let text = try? String(contentsOf: root.appending(path: file.path), encoding: .utf8),
+              let existing = ActionPin.parse(text),
+              ActionPin.isNewer(existing.version, than: current.version),
+              let kept = Templates.files(action: existing).first(where: { $0.path == file.path })
+        else {
+            return file
+        }
+        return kept
+    }
+
+    /// The workflows under .github/workflows/, as repo-relative paths, whose text still installs xcflow from the local action.
+    static func workflowsUsingLegacyAction(in root: URL) -> Set<String> {
+        let folder = ".github/workflows"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.appending(path: folder).path(percentEncoded: false))) ?? []
+        return Set(names
+            .filter { $0.hasSuffix(".yml") || $0.hasSuffix(".yaml") }
+            .map { "\(folder)/\($0)" }
+            .filter { (try? String(contentsOf: root.appending(path: $0), encoding: .utf8))?.contains("./.github/actions/xcflow") == true })
+    }
+
     static func write(_ file: Templates.File, in root: URL, force: Bool, dryRun: Bool, prompt: Prompt) throws -> FileStatus {
         let url = root.appending(path: file.path)
         guard let current = try? String(contentsOf: url, encoding: .utf8) else {
@@ -127,7 +187,7 @@ enum RepoSetup {
         guard current != file.content else {
             return .unchanged
         }
-        guard force || (!dryRun && prompt.ask("\(file.path) differs from xcflow's version. Overwrite it?")) else {
+        guard force || prompt.ask("\(file.path) differs from xcflow's version. Overwrite it?") else {
             return .keptDifferent
         }
         if !dryRun {
@@ -150,6 +210,28 @@ enum RepoSetup {
             try (JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) + Data("\n".utf8)).write(to: url)
         }
         return data == nil ? .created : .overwritten
+    }
+
+    /// The repo's Dependabot config: `.github/dependabot.yaml` when that is the one that exists, else `.github/dependabot.yml`.
+    static func dependabotConfigPath(in root: URL) -> String {
+        let yaml = ".github/dependabot.yaml"
+        let yml = ".github/dependabot.yml"
+        let exists = { (path: String) in FileManager.default.fileExists(atPath: root.appending(path: path).path(percentEncoded: false)) }
+        return !exists(yml) && exists(yaml) ? yaml : yml
+    }
+
+    /// Writes .github/dependabot.yml when neither it nor .github/dependabot.yaml exists. An existing file is never edited (there is no YAML parser here); it is kept, and reported when it has no github-actions entry.
+    static func mergeDependabot(in root: URL, dryRun: Bool) throws -> FileStatus {
+        let url = root.appending(path: dependabotConfigPath(in: root))
+        if FileManager.default.fileExists(atPath: url.path) {
+            guard let existing = try? String(contentsOf: url, encoding: .utf8) else { return .keptDifferent }
+            return existing.contains(/package-ecosystem:\s*["']?github-actions["']?/) ? .unchanged : .keptDifferent
+        }
+        if !dryRun {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Templates.dependabot.write(to: url, atomically: true, encoding: .utf8)
+        }
+        return .created
     }
 
     private static func describe(_ path: String, _ status: FileStatus, dryRun: Bool) -> String {
@@ -217,27 +299,10 @@ enum RepoSetup {
 
     // MARK: - Outside services
 
-    @Sendable private static func releaseChecksums(_ version: String) async -> String? {
-        guard !version.contains("-"),
-              let url = URL(string: "https://github.com/OlafAndreas/xcflow/releases/download/v\(version)/checksums.txt"),
-              let (data, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200
-        else {
-            return nil
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    static func parseChecksums(_ text: String) -> [String: String] {
-        var checksums: [String: String] = [:]
-        for line in text.split(whereSeparator: \.isNewline) {
-            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count == 2, parts[0].count == 64 else {
-                continue
-            }
-            checksums[String(parts[1].trimmingPrefix("*"))] = String(parts[0])
-        }
-        return checksums
+    /// The commit the action's tag for `version` points to, or nil when it can't be looked up.
+    @Sendable static func resolveActionCommit(_ version: String) -> String? {
+        let command = ["GIT_TERMINAL_PROMPT=0", "git", "ls-remote", "--tags", "https://github.com/\(ActionPin.repository).git", "v\(version)"]
+        return (try? run(command, in: URL.currentDirectory())).flatMap(ActionPin.commit(fromLsRemote:))
     }
 
     static let secretNames = ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_CONTENT"]

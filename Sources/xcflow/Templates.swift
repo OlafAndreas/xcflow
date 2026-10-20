@@ -4,25 +4,11 @@ enum Templates {
         let content: String
     }
 
-    static func archives(version: String) -> [String: String] {
+    static func files(action: ActionPin) -> [File] {
         [
-            "linux-x86_64": "xcflow-\(version)-linux-x86_64.tar.gz",
-            "linux-aarch64": "xcflow-\(version)-linux-aarch64.tar.gz"
-        ]
-    }
-
-    static func files(version: String, checksums: [String: String]) -> [File] {
-        var install = installAction.replacingOccurrences(of: "{{version}}", with: version)
-        for (platform, archive) in archives(version: version) {
-            install = install
-                .replacingOccurrences(of: "{{archive-\(platform)}}", with: archive)
-                .replacingOccurrences(of: "{{checksum-\(platform)}}", with: checksums[archive] ?? "")
-        }
-        return [
-            File(path: ".github/actions/xcflow/action.yml", content: install),
-            File(path: ".github/workflows/xcflow-plan.yml", content: planWorkflow),
-            File(path: ".github/workflows/xcflow-apply.yml", content: applyWorkflow),
-            File(path: ".github/workflows/xcflow-sync.yml", content: syncWorkflow),
+            File(path: ".github/workflows/xcflow-plan.yml", content: planWorkflow.replacing("{{action}}", with: action.uses)),
+            File(path: ".github/workflows/xcflow-apply.yml", content: applyWorkflow.replacing("{{action}}", with: action.uses)),
+            File(path: ".github/workflows/xcflow-sync.yml", content: syncWorkflow.replacing("{{action}}", with: action.uses)),
             File(path: "XcodeCloud/README.md", content: workflowsReadme),
             File(path: ".claude/skills/edit-xcode-cloud-workflow/SKILL.md", content: skill),
             File(path: ".claude/rules/xcode-cloud.md", content: rule)
@@ -33,32 +19,7 @@ enum Templates {
         ["type": "stdio", "command": "xcflow", "args": [String](), "env": [String: String]()]
     }
 
-    private static let installAction = #"""
-    name: Install xcflow
-    description: Installs the pinned xcflow release on a Linux runner. xcflow plans and applies the Xcode Cloud workflows in XcodeCloud/.
-
-    runs:
-      using: composite
-      steps:
-        - name: Install xcflow {{version}}
-          shell: bash
-          run: |
-            case "$RUNNER_OS-$RUNNER_ARCH" in
-              Linux-X64) NAME="{{archive-linux-x86_64}}"; SUM="{{checksum-linux-x86_64}}" ;;
-              Linux-ARM64) NAME="{{archive-linux-aarch64}}"; SUM="{{checksum-linux-aarch64}}" ;;
-              *) echo "::error::This action installs xcflow on Linux runners only, not on $RUNNER_OS $RUNNER_ARCH. Use runs-on: ubuntu-latest."; exit 1 ;;
-            esac
-            ARCHIVE="$RUNNER_TEMP/xcflow.tar.gz"
-            curl -fsSL -o "$ARCHIVE" "https://github.com/OlafAndreas/xcflow/releases/download/v{{version}}/$NAME"
-            if [ -n "$SUM" ]; then
-              echo "$SUM  $ARCHIVE" | shasum -a 256 -c -
-            fi
-            mkdir -p "$RUNNER_TEMP/xcflow"
-            tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP/xcflow"
-            echo "$RUNNER_TEMP/xcflow" >> "$GITHUB_PATH"
-            "$RUNNER_TEMP/xcflow/xcflow" --version
-
-    """#
+    static let dependabot = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n    allow:\n      - dependency-name: OlafAndreas/xcflow-action\n"
 
     private static let planWorkflow = #"""
     name: Xcode Cloud plan
@@ -68,7 +29,6 @@ enum Templates {
         types: [opened, synchronize, reopened, ready_for_review]
         paths:
           - 'XcodeCloud/**'
-          - '.github/actions/xcflow/**'
           - '.github/workflows/xcflow-*.yml'
 
     permissions:
@@ -82,7 +42,7 @@ enum Templates {
     jobs:
       plan:
         name: Plan Xcode Cloud workflow changes
-        if: github.event.pull_request.draft == false
+        if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'
         runs-on: ubuntu-latest
 
         steps:
@@ -90,7 +50,7 @@ enum Templates {
             uses: actions/checkout@v7
 
           - name: Install xcflow
-            uses: ./.github/actions/xcflow
+            uses: {{action}}
 
           - name: Plan
             id: plan
@@ -164,7 +124,7 @@ enum Templates {
             uses: actions/checkout@v7
 
           - name: Install xcflow
-            uses: ./.github/actions/xcflow
+            uses: {{action}}
 
           - name: Apply
             env:
@@ -211,7 +171,7 @@ enum Templates {
             uses: actions/checkout@v7
 
           - name: Install xcflow
-            uses: ./.github/actions/xcflow
+            uses: {{action}}
 
           - name: Export the live workflows
             env:
@@ -298,7 +258,7 @@ enum Templates {
     - **Merge it** to accept the changes into the repo. The apply after the merge changes nothing in Xcode Cloud.
     - **To undo the changes instead**, run the "Xcode Cloud apply" workflow by hand. It puts back what the files say, and the next sync closes the PR.
 
-    The plan check doesn't run on the sync PR, because GitHub doesn't start workflows for PRs that a workflow opened.
+    The plan check doesn't run on the sync PR, because GitHub doesn't start workflows for PRs that a workflow opened. It doesn't run on Dependabot's pull requests either, which bump the pinned xcflow version: those run without the repo's secrets. xcflow's own release workflow builds and checks each release, and the nightly sync is the first run with the new version here.
 
     ## Seeing the plan locally
 
@@ -352,7 +312,6 @@ enum Templates {
     paths:
       - "XcodeCloud/**"
       - ".github/workflows/xcflow-*.yml"
-      - ".github/actions/xcflow/**"
       - "ci_scripts/**"
     ---
 
