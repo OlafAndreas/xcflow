@@ -59,6 +59,9 @@ enum LegacyAction {
         return .removed
     }
 
+    /// The live source of the action is `Action/action.yml`, which the release workflow renders and
+    /// pushes to `OlafAndreas/xcflow-action`. This copy is frozen, for recognising the files written
+    /// by xcflow 0.2.1 through 0.2.7.
     private static let template = #"""
     name: Install xcflow
     description: Installs the pinned xcflow release on a Linux runner. xcflow plans and applies the Xcode Cloud workflows in XcodeCloud/.
