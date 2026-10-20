@@ -131,7 +131,8 @@ jobs:
               -e "s/{{archive-linux-aarch64}}/xcflow-$VERSION-linux-aarch64.tar.gz/g" -e "s/{{checksum-linux-aarch64}}/$ARM/g" \
               Action/action.yml > action/action.yml
           if grep -q "{{" action/action.yml; then echo "::error::A placeholder in action.yml wasn't filled."; exit 1; fi
-          cp Action/README.md LICENSE action/
+          sed "s/{{version}}/$VERSION/g" Action/README.md > action/README.md
+          cp LICENSE action/
           cd action
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
