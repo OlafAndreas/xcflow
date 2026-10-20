@@ -53,7 +53,7 @@ Xcode Cloud has to be switched on for the app first: create its first workflow i
 
    Run it again at any time; files that already match are left alone, and a newer pin that Dependabot made is kept.
 
-   A repo set up by an earlier xcflow loses its `.github/actions/xcflow/` on the next `setup` if the file is untouched, or gets a to-do if it was edited.
+   A repo set up by an earlier xcflow loses its `.github/actions/xcflow/` on the next `setup` once the file is untouched and no workflow uses it any more. While a workflow still references it, or if it was edited, `setup` keeps it and says what to do in the to-do list.
 
 ## How it works
 

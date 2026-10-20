@@ -79,6 +79,7 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: dist/
 
+  # Every step here can run again after a failure: see the guards before the release create, the action push and the formula commit.
   publish:
     name: Publish the release
     needs: [macos, linux]
@@ -104,7 +105,13 @@ jobs:
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "xcflow ${GITHUB_REF_NAME#v}" --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME exists already; making sure it has every asset."
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "xcflow ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
 
       - name: Publish the install action
         env:
@@ -115,6 +122,10 @@ jobs:
           ARM=$(grep "xcflow-$VERSION-linux-aarch64.tar.gz" dist/checksums.txt | cut -d ' ' -f 1)
           test -n "$X86" -a -n "$ARM" || { echo "::error::Linux checksums missing from checksums.txt."; exit 1; }
           git clone "https://x-access-token:${ACTION_TOKEN}@github.com/OlafAndreas/xcflow-action.git" action
+          if git -C action ls-remote --exit-code --tags origin "v$VERSION" >/dev/null 2>&1; then
+            echo "xcflow-action v$VERSION is published already; leaving it as it is."
+            exit 0
+          fi
           sed -e "s/{{version}}/$VERSION/g" \
               -e "s/{{archive-linux-x86_64}}/xcflow-$VERSION-linux-x86_64.tar.gz/g" -e "s/{{checksum-linux-x86_64}}/$X86/g" \
               -e "s/{{archive-linux-aarch64}}/xcflow-$VERSION-linux-aarch64.tar.gz/g" -e "s/{{checksum-linux-aarch64}}/$ARM/g" \
@@ -160,8 +171,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/xcflow.rb
-          git commit -m "xcflow ${VERSION}"
-          git push
+          if git diff --cached --quiet; then
+            echo "The formula is at $VERSION already."
+          else
+            git commit -m "xcflow ${VERSION}"
+            git push
+          fi
 
   verify:
     name: Verify the release on ${{ matrix.runner }}
