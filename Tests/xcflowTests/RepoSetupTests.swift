@@ -428,4 +428,81 @@ struct RepoSetupTests {
         _ = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--dry-run"])
         #expect(FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false)))
     }
+
+    /// A workflow as an older xcflow wrote it: installing xcflow from the local action.
+    private func writeLocalActionWorkflow(in root: URL, at path: String) throws {
+        let url = root.appending(path: path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let text = "name: Old\non: push\njobs:\n  run:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/xcflow\n"
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func writeOldRepo(in root: URL) throws {
+        try writeLegacyAction(in: root)
+        for name in ["plan", "apply", "sync"] {
+            try writeLocalActionWorkflow(in: root, at: ".github/workflows/xcflow-\(name).yml")
+        }
+    }
+
+    private func legacyActionExists(in root: URL) -> Bool {
+        FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false))
+    }
+
+    @Test func theLegacyActionIsKeptWhileKeptWorkflowsStillUseIt() async throws {
+        let root = try makeRepo()
+        try writeOldRepo(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(legacyActionExists(in: root))
+        #expect(todo.contains { $0.contains("then remove `.github/actions/xcflow/`") && $0.contains(".github/workflows/xcflow-plan.yml") })
+    }
+
+    @Test func theLegacyActionIsRemovedOnceTheWorkflowsAreRewritten() async throws {
+        let root = try makeRepo()
+        try writeOldRepo(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--yes"])
+        #expect(!legacyActionExists(in: root))
+        for name in ["plan", "apply", "sync"] {
+            #expect(try String(contentsOf: root.appending(path: ".github/workflows/xcflow-\(name).yml"), encoding: .utf8).contains("uses: OlafAndreas/xcflow-action@"))
+        }
+        #expect(!todo.contains { $0.contains("then remove `.github/actions/xcflow/`") })
+    }
+
+    @Test func anotherWorkflowUsingTheLegacyActionKeepsItUnlessForced() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try writeLegacyAction(in: root)
+        try writeLocalActionWorkflow(in: root, at: ".github/workflows/other.yml")
+        let kept = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(legacyActionExists(in: root))
+        #expect(kept.contains { $0.contains("then remove `.github/actions/xcflow/`") && $0.contains(".github/workflows/other.yml") && !$0.contains("xcflow-plan.yml") })
+
+        let forced = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--force"])
+        #expect(!legacyActionExists(in: root))
+        #expect(forced.contains { $0.contains("then remove `.github/actions/xcflow/`") && $0.contains(".github/workflows/other.yml") })
+    }
+
+    @Test func aTagPinKeepsItsTodoOnceTheTagResolves() async throws {
+        let root = try makeRepo()
+        try await RepoSetup.run(
+            arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets"],
+            resolveActionCommit: { _ in nil }, interactive: false)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try plan(root).contains("uses: OlafAndreas/xcflow-action@v\(Version.current)\n"))
+        #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action`") })
+    }
+
+    @Test func anExistingDependabotYamlIsUsedInsteadOfCreatingYml() async throws {
+        for (existing, todoExpected) in [
+            ("version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n", false),
+            ("version: 2\nupdates:\n  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n", true)
+        ] {
+            let root = try makeRepo()
+            try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+            try existing.write(to: root.appending(path: ".github/dependabot.yaml"), atomically: true, encoding: .utf8)
+            let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: ".github/dependabot.yml").path(percentEncoded: false)))
+            #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yaml"), encoding: .utf8) == existing)
+            #expect(todo.contains { $0.hasPrefix("Add an entry to `.github/dependabot.yaml`") } == todoExpected)
+        }
+    }
 }

@@ -82,28 +82,48 @@ enum RepoSetup {
         try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, todo: &todo)
 
         let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))
-        if pin.commit == nil {
-            todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in the three workflows once the tag exists; the lookup failed (offline, or not released yet).")
-        }
+        var keptTagPin = false
+        var rewritten: Set<String> = []
         for generated in Templates.files(action: pin) {
             let file = keepingNewerPin(generated, in: root, current: pin, force: options.force)
             let status = try write(file, in: root, force: options.force, dryRun: options.dryRun, prompt: prompt)
             print(describe(file.path, status, dryRun: options.dryRun))
+            if status == .created || status == .overwritten {
+                rewritten.insert(file.path)
+            } else if status == .keptDifferent, pin.commit != nil,
+                      let text = try? String(contentsOf: root.appending(path: file.path), encoding: .utf8),
+                      let existing = ActionPin.parse(text), existing.commit == nil {
+                keptTagPin = true
+            }
         }
-        switch try LegacyAction.remove(in: root, force: options.force, dryRun: options.dryRun) {
-        case .removed:
-            print("\(options.dryRun ? "Would remove" : "Removed") \(LegacyAction.path), replaced by \(ActionPin.repository)")
-        case .kept:
-            print("Kept \(LegacyAction.path), which differs from xcflow's version")
-            todo.append("Remove `.github/actions/xcflow/`; the workflows now install xcflow from `\(ActionPin.repository)`.")
-        case .absent:
-            break
+        if pin.commit == nil || keptTagPin {
+            todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in the three workflows once the tag exists; the lookup failed (offline, or not released yet).")
+        }
+        // A workflow that still installs xcflow from the local action would break without it, so the action stays unless --force.
+        let hasLegacyAction = FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false))
+        let stillUsing = hasLegacyAction ? workflowsUsingLegacyAction(in: root).subtracting(rewritten).sorted() : []
+        if !stillUsing.isEmpty, !options.force {
+            print("Kept \(LegacyAction.path); still used by \(stillUsing.joined(separator: ", "))")
+        } else {
+            switch try LegacyAction.remove(in: root, force: options.force, dryRun: options.dryRun) {
+            case .removed:
+                print("\(options.dryRun ? "Would remove" : "Removed") \(LegacyAction.path), replaced by \(ActionPin.repository)")
+            case .kept:
+                print("Kept \(LegacyAction.path), which differs from xcflow's version")
+                todo.append("Remove `.github/actions/xcflow/`; the workflows now install xcflow from `\(ActionPin.repository)`.")
+            case .absent:
+                break
+            }
+        }
+        if !stillUsing.isEmpty {
+            todo.append("Install xcflow from `\(ActionPin.repository)` in \(stillUsing.joined(separator: ", ")) (run `xcflow setup --yes` for the generated workflows), then remove `.github/actions/xcflow/`.")
         }
         print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
+        let dependabotPath = dependabotConfigPath(in: root)
         let dependabot = try mergeDependabot(in: root, dryRun: options.dryRun)
-        print(describe(".github/dependabot.yml", dependabot, dryRun: options.dryRun))
+        print(describe(dependabotPath, dependabot, dryRun: options.dryRun))
         if dependabot == .keptDifferent {
-            todo.append("Add an entry to `.github/dependabot.yml` with `package-ecosystem: github-actions`, `directory: /` and a weekly schedule, so Dependabot bumps the xcflow-action pin.")
+            todo.append("Add an entry to `\(dependabotPath)` with `package-ecosystem: github-actions`, `directory: /` and a weekly schedule, so Dependabot bumps the xcflow-action pin.")
         }
 
         if options.skipSecrets {
@@ -143,6 +163,16 @@ enum RepoSetup {
         return kept
     }
 
+    /// The workflows under .github/workflows/, as repo-relative paths, whose text still installs xcflow from the local action.
+    static func workflowsUsingLegacyAction(in root: URL) -> Set<String> {
+        let folder = ".github/workflows"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.appending(path: folder).path(percentEncoded: false))) ?? []
+        return Set(names
+            .filter { $0.hasSuffix(".yml") || $0.hasSuffix(".yaml") }
+            .map { "\(folder)/\($0)" }
+            .filter { (try? String(contentsOf: root.appending(path: $0), encoding: .utf8))?.contains("./.github/actions/xcflow") == true })
+    }
+
     static func write(_ file: Templates.File, in root: URL, force: Bool, dryRun: Bool, prompt: Prompt) throws -> FileStatus {
         let url = root.appending(path: file.path)
         guard let current = try? String(contentsOf: url, encoding: .utf8) else {
@@ -180,9 +210,17 @@ enum RepoSetup {
         return data == nil ? .created : .overwritten
     }
 
-    /// Writes .github/dependabot.yml when it is missing. An existing file is never edited (there is no YAML parser here); it is kept, and reported when it has no github-actions entry.
+    /// The repo's Dependabot config: `.github/dependabot.yaml` when that is the one that exists, else `.github/dependabot.yml`.
+    static func dependabotConfigPath(in root: URL) -> String {
+        let yaml = ".github/dependabot.yaml"
+        let yml = ".github/dependabot.yml"
+        let exists = { (path: String) in FileManager.default.fileExists(atPath: root.appending(path: path).path(percentEncoded: false)) }
+        return !exists(yml) && exists(yaml) ? yaml : yml
+    }
+
+    /// Writes .github/dependabot.yml when neither it nor .github/dependabot.yaml exists. An existing file is never edited (there is no YAML parser here); it is kept, and reported when it has no github-actions entry.
     static func mergeDependabot(in root: URL, dryRun: Bool) throws -> FileStatus {
-        let url = root.appending(path: ".github/dependabot.yml")
+        let url = root.appending(path: dependabotConfigPath(in: root))
         if FileManager.default.fileExists(atPath: url.path) {
             guard let existing = try? String(contentsOf: url, encoding: .utf8) else { return .keptDifferent }
             return existing.contains(/package-ecosystem:\s*["']?github-actions["']?/) ? .unchanged : .keptDifferent
