@@ -118,6 +118,11 @@ struct RepoSetupTests {
         #expect(plan.contains("if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'"))
     }
 
+    @Test func thePlanWorkflowTriggersOnBothPaths() {
+        let plan = Templates.files(action: ActionPin(version: "1.2.3", commit: nil)).first { $0.path == ".github/workflows/xcflow-plan.yml" }?.content ?? ""
+        #expect(plan.contains("    paths:\n      - 'XcodeCloud/**'\n      - '.github/workflows/xcflow-*.yml'\n"))
+    }
+
     @Test func generatedFilesNoLongerMentionTheLocalAction() {
         #expect(Templates.files(action: ActionPin(version: "1.2.3", commit: nil)).allSatisfy { !$0.content.contains(".github/actions/xcflow") })
     }

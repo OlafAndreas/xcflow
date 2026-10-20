@@ -27,7 +27,7 @@ enum Templates {
         types: [opened, synchronize, reopened, ready_for_review]
         paths:
           - 'XcodeCloud/**'
-              - '.github/workflows/xcflow-*.yml'
+          - '.github/workflows/xcflow-*.yml'
 
     permissions:
       contents: read
