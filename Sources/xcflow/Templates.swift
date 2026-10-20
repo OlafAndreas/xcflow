@@ -19,7 +19,7 @@ enum Templates {
         ["type": "stdio", "command": "xcflow", "args": [String](), "env": [String: String]()]
     }
 
-    static let dependabot = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n"
+    static let dependabot = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n    allow:\n      - dependency-name: OlafAndreas/xcflow-action\n"
 
     private static let planWorkflow = #"""
     name: Xcode Cloud plan
@@ -258,7 +258,7 @@ enum Templates {
     - **Merge it** to accept the changes into the repo. The apply after the merge changes nothing in Xcode Cloud.
     - **To undo the changes instead**, run the "Xcode Cloud apply" workflow by hand. It puts back what the files say, and the next sync closes the PR.
 
-    The plan check doesn't run on the sync PR, because GitHub doesn't start workflows for PRs that a workflow opened. It doesn't run on Dependabot's pull requests either, which bump the pinned xcflow version: those run without the repo's secrets, and the release the bump points to was verified on xcflow's side before it was published.
+    The plan check doesn't run on the sync PR, because GitHub doesn't start workflows for PRs that a workflow opened. It doesn't run on Dependabot's pull requests either, which bump the pinned xcflow version: those run without the repo's secrets. xcflow's own release workflow builds and checks each release, and the nightly sync is the first run with the new version here.
 
     ## Seeing the plan locally
 

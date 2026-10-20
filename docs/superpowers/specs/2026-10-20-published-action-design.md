@@ -88,7 +88,11 @@ The job order makes the release fail loudly if the action push failed, before an
       directory: /
       schedule:
         interval: weekly
+      allow:
+        - dependency-name: OlafAndreas/xcflow-action
   ```
+
+  The `allow` filter keeps Dependabot to the xcflow pin: `setup` writes the other actions in the generated workflows at fixed versions and would undo any bump of them.
 
   Status rules: missing → created. Present and containing a `github-actions` package ecosystem entry, quoted or not → unchanged. Present without one → kept, reported like other differing files, with a to-do that quotes the entry to add. Weekly is the interval because a bump needs a review anyway and more often than that is noise; this is the designer's call, not a requirement.
 - `XcodeCloud/README.md`, the skill and the rule: wording that mentions `.github/actions/xcflow/` changes to name the published action.
@@ -129,7 +133,7 @@ Dependabot-triggered workflow runs get no Actions secrets, so the plan check has
 if: github.actor != 'dependabot[bot]'
 ```
 
-and the README says that a bump merges on the strength of xcflow's own release verification, and that the apply run on the default branch is the first run with the new version in that repo. Since every release's verify job runs the released binary's `plan` against fixtures on all three runners before the action tag is published, a bump that reaches a repo has already been exercised.
+and the README says that a bump merges on the strength of xcflow's own release checks, and that the nightly sync is the first run with the new version in that repo: apply runs on a push only when `XcodeCloud/` changes, which a bump doesn't touch. In xcflow's release workflow the action tag is published first and the verify job then runs the released binary's `plan` against fixtures on all three runners; a failed verify shows on the release.
 
 Nothing changes in the secrets code. The key stays in the Actions store only.
 

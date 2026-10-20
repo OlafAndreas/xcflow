@@ -16,7 +16,7 @@
 - The action stays Linux-only. Generated workflows keep `runs-on: ubuntu-latest` and `actions/checkout@v7`.
 - No local action is written any more. `.github/actions/xcflow/**` leaves every generated `paths:` list. `--checksums` goes away; `--action-sha <sha>` arrives.
 - The plan job's condition becomes `if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'`.
-- `.github/dependabot.yml` content, exactly: `version: 2`, one `updates` entry with `package-ecosystem: github-actions`, `directory: /`, `schedule: interval: weekly`, unquoted.
+- `.github/dependabot.yml` content, exactly: `version: 2`, one `updates` entry with `package-ecosystem: github-actions`, `directory: /`, `schedule: interval: weekly`, `allow: - dependency-name: OlafAndreas/xcflow-action`, unquoted.
 - A workflow file that pins a newer version than `Version.current` is rendered with that pin and compares as unchanged; `--force` always writes the current pin.
 - Release: action pushed as one commit `xcflow X.Y.Z` by `github-actions[bot]` with a lightweight tag `vX.Y.Z`, after the GitHub release and **before** the Homebrew formula. Token secret: `ACTION_TOKEN`.
 - Don't bump `Version.swift`; releases are cut separately. No attribution trailers in commits. Work on branch `olaf/published-action` in the worktree that already holds the spec.
@@ -264,7 +264,7 @@ Expected: compile errors on `files(action:)`, `resolveActionCommit:`, `commit(fr
 
 - [ ] **Step 3: Implement**
 
-- `Templates`: `files(action:)` replaces the three `uses: ./.github/actions/xcflow` with `uses: {{action}}` in the templates and substitutes `action.uses`; remove the action `File`, `archives`, and the `.github/actions/xcflow/**` lines in the plan `paths:` and the rule `paths:`; extend the plan `if:`; in the workflows README, after the sentence about the sync PR, add: `It doesn't run on Dependabot's pull requests either, which bump the pinned xcflow version: those run without the repo's secrets, and the release the bump points to was verified on xcflow's side before it was published.`
+- `Templates`: `files(action:)` replaces the three `uses: ./.github/actions/xcflow` with `uses: {{action}}` in the templates and substitutes `action.uses`; remove the action `File`, `archives`, and the `.github/actions/xcflow/**` lines in the plan `paths:` and the rule `paths:`; extend the plan `if:`; in the workflows README, after the sentence about the sync PR, add: `It doesn't run on Dependabot's pull requests either, which bump the pinned xcflow version: those run without the repo's secrets. xcflow's own release workflow builds and checks each release, and the nightly sync is the first run with the new version here.`
 - `RepoSetup.Options`: `--action-sha` sets `actionSHA`; `Options.init` refuses a value that isn't 40 hex characters with the exact text above. Remove `--checksums`.
 - `RepoSetup.run`: after `exportProducts`, `let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))`; append the to-do when `pin.commit == nil`; iterate `Templates.files(action: pin)`. Delete the checksum block, `releaseChecksums`, `parseChecksums`.
 - `RepoSetup.resolveActionCommit` runs `["GIT_TERMINAL_PROMPT=0", "git", "ls-remote", "--tags", "https://github.com/OlafAndreas/xcflow-action.git", "v\(version)"]` through the existing `run(_:in:)` helper from `URL.currentDirectory()`, returns `nil` on any error, else `ActionPin.commit(fromLsRemote:)`.
@@ -373,7 +373,7 @@ git commit -m "Keep a newer xcflow-action pin when setup runs again"
 - Produces:
   ```swift
   // Templates
-  static let dependabot = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n"
+  static let dependabot = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n    allow:\n      - dependency-name: OlafAndreas/xcflow-action\n"
   // RepoSetup
   static func mergeDependabot(in root: URL, dryRun: Bool) throws -> FileStatus   // .created | .unchanged | .keptDifferent
   ```
@@ -574,7 +574,7 @@ In `Use the macOS archive`, delete the `grep -q "macOS" smoke/.github/actions/xc
 
 - [ ] **Step 4: Update `README.md`**
 
-In the "Set up a repo" list: the workflows bullet says the three workflows run on `ubuntu-latest` and install xcflow from `OlafAndreas/xcflow-action`, pinned to a commit; a new bullet says `.github/dependabot.yml` is added so Dependabot opens a pull request when a new xcflow is out, that the plan check doesn't run on those pull requests because they can't read the repo's secrets, and that the apply on the default branch is the first run of the new version in that repo. The closing sentence becomes: `Run it again at any time; files that already match are left alone, and a newer pin that Dependabot made is kept.` Add, after the list, one sentence: a repo set up by an earlier xcflow loses its `.github/actions/xcflow/` on the next `setup` if the file is untouched, or gets a to-do if it was edited.
+In the "Set up a repo" list: the workflows bullet says the three workflows run on `ubuntu-latest` and install xcflow from `OlafAndreas/xcflow-action`, pinned to a commit; a new bullet says `.github/dependabot.yml` is added so Dependabot opens a pull request when a new xcflow is out, that the plan check doesn't run on those pull requests because they can't read the repo's secrets, that the bump merges on the strength of xcflow's own release checks, and that the nightly sync is the first run of the new version in that repo. The closing sentence becomes: `Run it again at any time; files that already match are left alone, and a newer pin that Dependabot made is kept.` Add, after the list, one sentence: a repo set up by an earlier xcflow loses its `.github/actions/xcflow/` on the next `setup` if the file is untouched, or gets a to-do if it was edited.
 
 - [ ] **Step 5: Check the YAML parses and the suite is green**
 
