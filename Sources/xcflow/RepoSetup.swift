@@ -13,7 +13,7 @@ enum RepoSetup {
         var skipSecrets = false
         var replaceSecrets = false
         var repo: String?
-        var checksumsFile: String?
+        var actionSHA: String?
         var keyID: String?
         var issuerID: String?
         var p8: String?
@@ -33,7 +33,12 @@ enum RepoSetup {
                 case "--replace-secrets": replaceSecrets = true
                 case "--products": products = try Self.value(argument, &rest).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 case "--repo": repo = try Self.value(argument, &rest)
-                case "--checksums": checksumsFile = try Self.value(argument, &rest)
+                case "--action-sha":
+                    let sha = try Self.value(argument, &rest)
+                    guard sha.wholeMatch(of: /[0-9a-f]{40}/) != nil else {
+                        throw ToolError.refused("--action-sha must be the 40-character commit sha of \(ActionPin.repository).")
+                    }
+                    actionSHA = sha
                 case "--key-id": keyID = try Self.value(argument, &rest)
                 case "--issuer-id": issuerID = try Self.value(argument, &rest)
                 case "--p8": p8 = try Self.value(argument, &rest)
@@ -61,7 +66,7 @@ enum RepoSetup {
     static func run(
         arguments: [String],
         client: AppStoreConnectClient? = nil,
-        releaseChecksums: @Sendable (String) async -> String? = releaseChecksums,
+        resolveActionCommit: @Sendable (String) -> String? = resolveActionCommit,
         secrets: any SecretStore = GitHubSecrets(),
         interactive: Bool = isatty(STDIN_FILENO) == 1
     ) async throws -> [String] {
@@ -76,16 +81,11 @@ enum RepoSetup {
         var todo: [String] = []
         try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, todo: &todo)
 
-        var checksumsText = try options.checksumsFile.map { try String(contentsOf: URL(filePath: $0), encoding: .utf8) }
-        if checksumsText == nil {
-            checksumsText = await releaseChecksums(Version.current)
+        let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))
+        if pin.commit == nil {
+            todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in the three workflows once the tag exists; the lookup failed (offline, or not released yet).")
         }
-        let checksums = checksumsText.map(parseChecksums) ?? [:]
-        let unverified = LegacyAction.archives(version: Version.current).values.filter { checksums[$0] == nil }.sorted()
-        if !unverified.isEmpty {
-            todo.append("Add the release checksums to `.github/actions/xcflow/action.yml`, so CI verifies the download. Missing: \(unverified.joined(separator: ", ")).")
-        }
-        for file in Templates.files(version: Version.current, checksums: checksums) {
+        for file in Templates.files(action: pin) {
             let status = try write(file, in: root, force: options.force, dryRun: options.dryRun, prompt: prompt)
             print(describe(file.path, status, dryRun: options.dryRun))
         }
@@ -217,27 +217,10 @@ enum RepoSetup {
 
     // MARK: - Outside services
 
-    @Sendable private static func releaseChecksums(_ version: String) async -> String? {
-        guard !version.contains("-"),
-              let url = URL(string: "https://github.com/OlafAndreas/xcflow/releases/download/v\(version)/checksums.txt"),
-              let (data, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200
-        else {
-            return nil
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    static func parseChecksums(_ text: String) -> [String: String] {
-        var checksums: [String: String] = [:]
-        for line in text.split(whereSeparator: \.isNewline) {
-            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count == 2, parts[0].count == 64 else {
-                continue
-            }
-            checksums[String(parts[1].trimmingPrefix("*"))] = String(parts[0])
-        }
-        return checksums
+    /// The commit the action's tag for `version` points to, or nil when it can't be looked up.
+    @Sendable static func resolveActionCommit(_ version: String) -> String? {
+        let command = ["GIT_TERMINAL_PROMPT=0", "git", "ls-remote", "--tags", "https://github.com/\(ActionPin.repository).git", "v\(version)"]
+        return (try? run(command, in: URL.currentDirectory())).flatMap(ActionPin.commit(fromLsRemote:))
     }
 
     static let secretNames = ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_CONTENT"]

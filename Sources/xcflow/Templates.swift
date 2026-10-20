@@ -4,13 +4,11 @@ enum Templates {
         let content: String
     }
 
-    static func files(version: String, checksums: [String: String]) -> [File] {
-        let install = LegacyAction.render(version: version, checksums: checksums)
-        return [
-            File(path: LegacyAction.path, content: install),
-            File(path: ".github/workflows/xcflow-plan.yml", content: planWorkflow),
-            File(path: ".github/workflows/xcflow-apply.yml", content: applyWorkflow),
-            File(path: ".github/workflows/xcflow-sync.yml", content: syncWorkflow),
+    static func files(action: ActionPin) -> [File] {
+        [
+            File(path: ".github/workflows/xcflow-plan.yml", content: planWorkflow.replacing("{{action}}", with: action.uses)),
+            File(path: ".github/workflows/xcflow-apply.yml", content: applyWorkflow.replacing("{{action}}", with: action.uses)),
+            File(path: ".github/workflows/xcflow-sync.yml", content: syncWorkflow.replacing("{{action}}", with: action.uses)),
             File(path: "XcodeCloud/README.md", content: workflowsReadme),
             File(path: ".claude/skills/edit-xcode-cloud-workflow/SKILL.md", content: skill),
             File(path: ".claude/rules/xcode-cloud.md", content: rule)
@@ -29,8 +27,7 @@ enum Templates {
         types: [opened, synchronize, reopened, ready_for_review]
         paths:
           - 'XcodeCloud/**'
-          - '.github/actions/xcflow/**'
-          - '.github/workflows/xcflow-*.yml'
+              - '.github/workflows/xcflow-*.yml'
 
     permissions:
       contents: read
@@ -43,7 +40,7 @@ enum Templates {
     jobs:
       plan:
         name: Plan Xcode Cloud workflow changes
-        if: github.event.pull_request.draft == false
+        if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'
         runs-on: ubuntu-latest
 
         steps:
@@ -51,7 +48,7 @@ enum Templates {
             uses: actions/checkout@v7
 
           - name: Install xcflow
-            uses: ./.github/actions/xcflow
+            uses: {{action}}
 
           - name: Plan
             id: plan
@@ -125,7 +122,7 @@ enum Templates {
             uses: actions/checkout@v7
 
           - name: Install xcflow
-            uses: ./.github/actions/xcflow
+            uses: {{action}}
 
           - name: Apply
             env:
@@ -172,7 +169,7 @@ enum Templates {
             uses: actions/checkout@v7
 
           - name: Install xcflow
-            uses: ./.github/actions/xcflow
+            uses: {{action}}
 
           - name: Export the live workflows
             env:
@@ -259,7 +256,7 @@ enum Templates {
     - **Merge it** to accept the changes into the repo. The apply after the merge changes nothing in Xcode Cloud.
     - **To undo the changes instead**, run the "Xcode Cloud apply" workflow by hand. It puts back what the files say, and the next sync closes the PR.
 
-    The plan check doesn't run on the sync PR, because GitHub doesn't start workflows for PRs that a workflow opened.
+    The plan check doesn't run on the sync PR, because GitHub doesn't start workflows for PRs that a workflow opened. It doesn't run on Dependabot's pull requests either, which bump the pinned xcflow version: those run without the repo's secrets, and the release the bump points to was verified on xcflow's side before it was published.
 
     ## Seeing the plan locally
 
@@ -313,7 +310,6 @@ enum Templates {
     paths:
       - "XcodeCloud/**"
       - ".github/workflows/xcflow-*.yml"
-      - ".github/actions/xcflow/**"
       - "ci_scripts/**"
     ---
 

@@ -32,4 +32,11 @@ struct ActionPinTests {
         #expect(!ActionPin.isNewer("0.2.8", than: "0.2.8"))
         #expect(!ActionPin.isNewer("0.2.7", than: "0.2.8"))
     }
+
+    @Test func lsRemotePrefersThePeeledTag() {
+        let tag = String(repeating: "b", count: 40), commit = String(repeating: "c", count: 40)
+        #expect(ActionPin.commit(fromLsRemote: "\(tag)\trefs/tags/v0.2.8\n\(commit)\trefs/tags/v0.2.8^{}\n") == commit)
+        #expect(ActionPin.commit(fromLsRemote: "\(commit)\trefs/tags/v0.2.8\n") == commit)
+        #expect(ActionPin.commit(fromLsRemote: "") == nil)
+    }
 }

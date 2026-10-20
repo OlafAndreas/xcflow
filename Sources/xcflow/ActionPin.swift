@@ -38,4 +38,13 @@ struct ActionPin: Equatable {
         let padded = { (parts: [Int]) in parts + Array(repeating: 0, count: count - parts.count) }
         return padded(rhs).lexicographicallyPrecedes(padded(lhs))
     }
+
+    /// The commit a tag points to, from `git ls-remote --tags` output: the peeled `^{}` line when the tag is annotated, else the tag's own line.
+    static func commit(fromLsRemote output: String) -> String? {
+        let lines = output.split(whereSeparator: \.isNewline).compactMap { line -> (sha: String, ref: Substring)? in
+            let parts = line.split(whereSeparator: \.isWhitespace)
+            return parts.count == 2 && parts[0].count == 40 ? (String(parts[0]), parts[1]) : nil
+        }
+        return (lines.first { $0.ref.hasSuffix("^{}") } ?? lines.first)?.sha
+    }
 }
