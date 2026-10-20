@@ -102,6 +102,16 @@ A new option `--action-sha <sha>` skips the lookup. Tests use it; so can an offl
 
 If the lookup fails or finds no tag, which happens offline and for a development build whose version isn't released yet, `setup` writes `uses: OlafAndreas/xcflow-action@vX.Y.Z` and adds a to-do: pin the action to its commit in the three workflows once the tag exists. The repo still works, and Dependabot still proposes updates to a tag reference.
 
+### Running `setup` again after Dependabot moved the pin
+
+Dependabot owns the pin, so a later `setup` must not quietly move it back. The three workflows carry the pinned version in the `# vX.Y.Z` comment, and `setup` reads it before comparing:
+
+- Pinned version newer than the running xcflow, which is the normal state after a Dependabot merge when the local install lags: render the workflow with the existing pin, so a file that otherwise matches is `Unchanged`, and the pin stays.
+- Pinned version equal to or older than the running xcflow: render with the current commit. Same version and commit → `Unchanged`. Older, or a tag reference that now resolves → the file differs, and the usual rule applies: `--yes` or a yes at the prompt updates it. This is how a repo is bumped by hand without waiting for Dependabot, and how the "pin it" to-do gets closed.
+- `--force` always writes the current pin.
+
+The README's promise that files which already match are left alone stays true, and gains a sentence: a newer pin is kept.
+
 ### Migration of an existing repo
 
 After writing the files, if `.github/actions/xcflow/action.yml` exists:
@@ -137,6 +147,7 @@ Until step 3 is done, a `setup` from a development build falls back to the tag r
 - Without a resolvable commit, the workflows reference the tag and the to-do names the pin.
 - `dependabot.yml`: created, unchanged when an entry exists in either quoting, kept with a to-do when the file lacks one.
 - Migration: untouched legacy action removed with its empty folders; edited one kept with a to-do; `--force` removes it; dry run writes and removes nothing.
+- Running again: a newer pin is kept and the file reads as unchanged; an older pin is reported as differing and updated with `--yes`; `--force` writes the current pin over a newer one.
 - Secrets: set to both stores; present in Actions only counts as missing; `--replace-secrets` replaces both. Through the existing `SecretStore` seam, which grows an `app` parameter.
 - Release workflow: covered by the verify job, not by unit tests.
 
@@ -147,3 +158,4 @@ Until step 3 is done, a `setup` from a development build falls back to the tag r
 - The shape of the `SecretStore` change for the two stores.
 - How the release step renders the placeholders: `sed`, or a few lines of shell. Not Swift.
 - Where the frozen legacy template lives in the Swift sources.
+- How the pinned version is read out of an existing workflow file; the `# vX.Y.Z` comment on the `uses:` line is the contract.
