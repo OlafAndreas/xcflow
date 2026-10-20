@@ -221,6 +221,16 @@ struct RepoSetupTests {
         }
     }
 
+    @Test func anUnreadableDependabotConfigIsKeptAndGetsATodo() async throws {
+        let root = try makeRepo()
+        let existing = Data([0xFF, 0xFE, 0x00])
+        try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+        try existing.write(to: root.appending(path: ".github/dependabot.yml"))
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try Data(contentsOf: root.appending(path: ".github/dependabot.yml")) == existing)
+        #expect(todo.contains { $0.hasPrefix("Add an entry to `.github/dependabot.yml`") })
+    }
+
     @Test func aDependabotConfigWithoutGithubActionsGetsATodo() async throws {
         let root = try makeRepo()
         let existing = "version: 2\nupdates:\n  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n"

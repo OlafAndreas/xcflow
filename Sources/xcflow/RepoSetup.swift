@@ -174,14 +174,15 @@ enum RepoSetup {
     /// Writes .github/dependabot.yml when it is missing. An existing file is never edited (there is no YAML parser here); it is kept, and reported when it has no github-actions entry.
     static func mergeDependabot(in root: URL, dryRun: Bool) throws -> FileStatus {
         let url = root.appending(path: ".github/dependabot.yml")
-        guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
-            if !dryRun {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Templates.dependabot.write(to: url, atomically: true, encoding: .utf8)
-            }
-            return .created
+        if FileManager.default.fileExists(atPath: url.path) {
+            guard let existing = try? String(contentsOf: url, encoding: .utf8) else { return .keptDifferent }
+            return existing.contains(/package-ecosystem:\s*["']?github-actions["']?/) ? .unchanged : .keptDifferent
         }
-        return existing.contains(/package-ecosystem:\s*["']?github-actions["']?/) ? .unchanged : .keptDifferent
+        if !dryRun {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Templates.dependabot.write(to: url, atomically: true, encoding: .utf8)
+        }
+        return .created
     }
 
     private static func describe(_ path: String, _ status: FileStatus, dryRun: Bool) -> String {
