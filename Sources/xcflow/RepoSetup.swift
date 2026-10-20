@@ -91,6 +91,11 @@ enum RepoSetup {
             print(describe(file.path, status, dryRun: options.dryRun))
         }
         print(describe(".mcp.json", try mergeMCPEntry(in: root, dryRun: options.dryRun), dryRun: options.dryRun))
+        let dependabot = try mergeDependabot(in: root, dryRun: options.dryRun)
+        print(describe(".github/dependabot.yml", dependabot, dryRun: options.dryRun))
+        if dependabot == .keptDifferent {
+            todo.append("Add an entry to `.github/dependabot.yml` with `package-ecosystem: github-actions`, `directory: /` and a weekly schedule, so Dependabot bumps the xcflow-action pin.")
+        }
 
         if options.skipSecrets {
             todo.append("Make sure the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets are set on the GitHub repo. Skipped with --skip-secrets.")
@@ -164,6 +169,19 @@ enum RepoSetup {
             try (JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) + Data("\n".utf8)).write(to: url)
         }
         return data == nil ? .created : .overwritten
+    }
+
+    /// Writes .github/dependabot.yml when it is missing. An existing file is never edited (there is no YAML parser here); it is kept, and reported when it has no github-actions entry.
+    static func mergeDependabot(in root: URL, dryRun: Bool) throws -> FileStatus {
+        let url = root.appending(path: ".github/dependabot.yml")
+        guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
+            if !dryRun {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Templates.dependabot.write(to: url, atomically: true, encoding: .utf8)
+            }
+            return .created
+        }
+        return existing.contains(/package-ecosystem:\s*["']?github-actions["']?/) ? .unchanged : .keptDifferent
     }
 
     private static func describe(_ path: String, _ status: FileStatus, dryRun: Bool) -> String {

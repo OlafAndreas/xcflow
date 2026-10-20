@@ -183,6 +183,7 @@ struct RepoSetupTests {
         #expect(files(in: root) == [
             ".claude/rules/xcode-cloud.md",
             ".claude/skills/edit-xcode-cloud-workflow/SKILL.md",
+            ".github/dependabot.yml",
             ".github/workflows/xcflow-apply.yml",
             ".github/workflows/xcflow-plan.yml",
             ".github/workflows/xcflow-sync.yml",
@@ -198,6 +199,36 @@ struct RepoSetupTests {
             #expect(try RepoSetup.write(file, in: root, force: false, dryRun: false, prompt: prompt) == .unchanged)
         }
         #expect(try RepoSetup.mergeMCPEntry(in: root, dryRun: false) == .unchanged)
+        #expect(try RepoSetup.mergeDependabot(in: root, dryRun: false) == .unchanged)
+    }
+
+    @Test func dependabotConfigIsCreated() async throws {
+        let root = try makeRepo()
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yml"), encoding: .utf8) == Templates.dependabot)
+        #expect(!todo.contains { $0.contains("dependabot.yml") })
+    }
+
+    @Test func anExistingGithubActionsEntryIsLeftAlone() async throws {
+        for quoted in ["github-actions", "\"github-actions\"", "'github-actions'"] {
+            let root = try makeRepo()
+            let existing = "version: 2\nupdates:\n  - package-ecosystem: \(quoted)\n    directory: \"/\"\n    schedule:\n      interval: daily\n"
+            try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+            try existing.write(to: root.appending(path: ".github/dependabot.yml"), atomically: true, encoding: .utf8)
+            let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+            #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yml"), encoding: .utf8) == existing)
+            #expect(!todo.contains { $0.contains("dependabot.yml") })
+        }
+    }
+
+    @Test func aDependabotConfigWithoutGithubActionsGetsATodo() async throws {
+        let root = try makeRepo()
+        let existing = "version: 2\nupdates:\n  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n"
+        try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+        try existing.write(to: root.appending(path: ".github/dependabot.yml"), atomically: true, encoding: .utf8)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yml"), encoding: .utf8) == existing)
+        #expect(todo.contains { $0.hasPrefix("Add an entry to `.github/dependabot.yml`") })
     }
 
     @Test func changedFilesAreKeptUnlessForced() async throws {

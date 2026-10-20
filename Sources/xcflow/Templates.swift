@@ -19,6 +19,8 @@ enum Templates {
         ["type": "stdio", "command": "xcflow", "args": [String](), "env": [String: String]()]
     }
 
+    static let dependabot = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n"
+
     private static let planWorkflow = #"""
     name: Xcode Cloud plan
 
