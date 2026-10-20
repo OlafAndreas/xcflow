@@ -1,5 +1,9 @@
 name: Install xcflow
 description: Installs the pinned xcflow release on a Linux runner. xcflow plans and applies the Xcode Cloud workflows in XcodeCloud/.
+author: Olaf Andreas Øvrum
+branding:
+  icon: code
+  color: purple
 
 runs:
   using: composite
