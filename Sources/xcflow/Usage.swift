@@ -4,7 +4,7 @@ enum Usage {
 
     Usage: xcflow <command>
       setup [--dry-run] [--yes] [--force] [--products <bundle id,…>] [--skip-export] [--skip-secrets] [--replace-secrets]
-            [--key-id <id> --issuer-id <id> --p8 <path>] [--checksums <file>]
+            [--key-id <id> --issuer-id <id> --p8 <path>] [--action-sha <sha>]
                                         Add the workflow files, GitHub Actions, Claude skill and rule, and MCP entry to this repo.
                                         With the team key's id, issuer id and .p8, set the GitHub secrets without asking.
       auth --key-id <KEY_ID> --p8 <path> Store your App Store Connect API key in the Keychain.

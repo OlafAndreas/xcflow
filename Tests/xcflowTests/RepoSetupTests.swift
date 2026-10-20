@@ -3,17 +3,7 @@ import Testing
 @testable import xcflow
 
 struct RepoSetupTests {
-    private let checksum = String(repeating: "a", count: 64)
-
-    private var checksums: [String: String] {
-        Dictionary(uniqueKeysWithValues: Templates.archives(version: Version.current).values.map { ($0, checksum) })
-    }
-
-    private func checksumsFile() throws -> String {
-        let url = FileManager.default.temporaryDirectory.appending(path: "xcflow-checksums-\(UUID().uuidString).txt")
-        try checksums.map { "\($0.value)  \($0.key)" }.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
-        return url.path(percentEncoded: false)
-    }
+    private let sha = String(repeating: "a", count: 40)
 
     private func makeRepo(mcp: String? = nil) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: "xcflow-setup-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -62,14 +52,23 @@ struct RepoSetupTests {
     @discardableResult
     private func setupSecrets(_ root: URL, _ extra: [String], secrets: FakeSecrets) async throws -> [String] {
         try await RepoSetup.run(
-            arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--checksums", try checksumsFile()] + extra,
+            arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--action-sha", sha] + extra,
             secrets: secrets,
             interactive: false
         )
     }
 
     private func setup(_ root: URL, _ extra: [String] = []) async throws {
-        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--checksums", try checksumsFile()] + extra)
+        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--action-sha", sha] + extra, interactive: false)
+    }
+
+    private func setupError(_ root: URL, _ extra: [String]) async -> String {
+        do {
+            try await setup(root, extra)
+            return "no error"
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     @Test func dryRunWritesNothing() async throws {
@@ -78,15 +77,104 @@ struct RepoSetupTests {
         #expect(files(in: root).isEmpty)
     }
 
-    @Test func dryRunFetchesTheReleaseChecksums() async throws {
+    /// Rewrites the `uses:` line of all three workflows.
+    private func repin(_ root: URL, to uses: String) throws {
+        for name in ["plan", "apply", "sync"] {
+            let url = root.appending(path: ".github/workflows/xcflow-\(name).yml")
+            let text = try String(contentsOf: url, encoding: .utf8)
+            try text.replacing(/uses: OlafAndreas\/xcflow-action@.*/, with: "uses: \(uses)").write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    private func plan(_ root: URL) throws -> String {
+        try String(contentsOf: root.appending(path: ".github/workflows/xcflow-plan.yml"), encoding: .utf8)
+    }
+
+    @Test func aNewerPinIsKeptEvenWithYes() async throws {
         let root = try makeRepo()
-        let published = checksums.map { "\($0.value)  \($0.key)" }.joined(separator: "\n")
+        try await setup(root)
+        let newer = "OlafAndreas/xcflow-action@\(String(repeating: "b", count: 40)) # v99.0.0"
+        try repin(root, to: newer)
+        try await setup(root, ["--yes"])
+        for name in ["plan", "apply", "sync"] {
+            #expect(try String(contentsOf: root.appending(path: ".github/workflows/xcflow-\(name).yml"), encoding: .utf8).contains("uses: \(newer)\n"))
+        }
+    }
+
+    @Test func anOlderPinIsUpdated() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try repin(root, to: "OlafAndreas/xcflow-action@\(String(repeating: "b", count: 40)) # v0.0.1")
+        try await setup(root, ["--yes"])
+        #expect(try plan(root).contains("@\(sha) # v\(Version.current)"))
+    }
+
+    @Test func forceWritesTheCurrentPinOverANewerOne() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try repin(root, to: "OlafAndreas/xcflow-action@\(String(repeating: "b", count: 40)) # v99.0.0")
+        try await setup(root, ["--force"])
+        #expect(try plan(root).contains("@\(sha) # v\(Version.current)"))
+    }
+
+    @Test func aForeignInstallStepIsADifference() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try repin(root, to: "someone/other-action@v1")
+        try await setup(root)
+        #expect(try plan(root).contains("uses: someone/other-action@v1\n"))
+        try await setup(root, ["--yes"])
+        #expect(try plan(root).contains("@\(sha) # v\(Version.current)"))
+    }
+
+    @Test func workflowsInstallFromThePinnedAction() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        for name in ["plan", "apply", "sync"] {
+            let text = try String(contentsOf: root.appending(path: ".github/workflows/xcflow-\(name).yml"), encoding: .utf8)
+            #expect(text.contains("uses: OlafAndreas/xcflow-action@\(sha) # v\(Version.current)"))
+            #expect(!text.contains(".github/actions/xcflow"))
+        }
+    }
+
+    @Test func dryRunResolvesTheActionCommit() async throws {
+        let root = try makeRepo()
         let todo = try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--dry-run"],
-            releaseChecksums: { version in version == Version.current ? published : nil }
-        )
-        #expect(!todo.contains { $0.contains("Missing") })
+            resolveActionCommit: { version in version == Version.current ? sha : nil })
+        #expect(!todo.contains { $0.contains("Pin `OlafAndreas/xcflow-action`") })
         #expect(files(in: root).isEmpty)
+    }
+
+    @Test func withoutAResolvableCommitTheWorkflowsUseTheTag() async throws {
+        let root = try makeRepo()
+        let todo = try await RepoSetup.run(
+            arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets"],
+            resolveActionCommit: { _ in nil })
+        let text = try String(contentsOf: root.appending(path: ".github/workflows/xcflow-plan.yml"), encoding: .utf8)
+        #expect(text.contains("uses: OlafAndreas/xcflow-action@v\(Version.current)\n"))
+        #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action` to its commit for v\(Version.current)") })
+    }
+
+    @Test func aMalformedActionShaIsRefusedBeforeWriting() async throws {
+        let root = try makeRepo()
+        let message = await setupError(root, ["--action-sha", "v0.2.8"])
+        #expect(message.contains("--action-sha"))
+        #expect(files(in: root).isEmpty)
+    }
+
+    @Test func thePlanJobSkipsDependabotPullRequests() {
+        let plan = Templates.files(action: ActionPin(version: "1.2.3", commit: nil)).first { $0.path == ".github/workflows/xcflow-plan.yml" }?.content ?? ""
+        #expect(plan.contains("if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'"))
+    }
+
+    @Test func thePlanWorkflowTriggersOnBothPaths() {
+        let plan = Templates.files(action: ActionPin(version: "1.2.3", commit: nil)).first { $0.path == ".github/workflows/xcflow-plan.yml" }?.content ?? ""
+        #expect(plan.contains("    paths:\n      - 'XcodeCloud/**'\n      - '.github/workflows/xcflow-*.yml'\n"))
+    }
+
+    @Test func generatedFilesNoLongerMentionTheLocalAction() {
+        #expect(Templates.files(action: ActionPin(version: "1.2.3", commit: nil)).allSatisfy { !$0.content.contains(".github/actions/xcflow") })
     }
 
     @Test func setupWritesEveryFileAndIsIdempotent() async throws {
@@ -95,7 +183,7 @@ struct RepoSetupTests {
         #expect(files(in: root) == [
             ".claude/rules/xcode-cloud.md",
             ".claude/skills/edit-xcode-cloud-workflow/SKILL.md",
-            ".github/actions/xcflow/action.yml",
+            ".github/dependabot.yml",
             ".github/workflows/xcflow-apply.yml",
             ".github/workflows/xcflow-plan.yml",
             ".github/workflows/xcflow-sync.yml",
@@ -107,10 +195,50 @@ struct RepoSetupTests {
         #expect(servers?.keys.sorted() == ["other", "xcflow"])
 
         let prompt = Prompt(yes: false, dryRun: false)
-        for file in Templates.files(version: Version.current, checksums: checksums) {
+        for file in Templates.files(action: ActionPin(version: Version.current, commit: sha)) {
             #expect(try RepoSetup.write(file, in: root, force: false, dryRun: false, prompt: prompt) == .unchanged)
         }
         #expect(try RepoSetup.mergeMCPEntry(in: root, dryRun: false) == .unchanged)
+        #expect(try RepoSetup.mergeDependabot(in: root, dryRun: false) == .unchanged)
+    }
+
+    @Test func dependabotConfigIsCreated() async throws {
+        let root = try makeRepo()
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yml"), encoding: .utf8) == Templates.dependabot)
+        #expect(!todo.contains { $0.contains("dependabot.yml") })
+    }
+
+    @Test func anExistingGithubActionsEntryIsLeftAlone() async throws {
+        for quoted in ["github-actions", "\"github-actions\"", "'github-actions'"] {
+            let root = try makeRepo()
+            let existing = "version: 2\nupdates:\n  - package-ecosystem: \(quoted)\n    directory: \"/\"\n    schedule:\n      interval: daily\n"
+            try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+            try existing.write(to: root.appending(path: ".github/dependabot.yml"), atomically: true, encoding: .utf8)
+            let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+            #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yml"), encoding: .utf8) == existing)
+            #expect(!todo.contains { $0.contains("dependabot.yml") })
+        }
+    }
+
+    @Test func anUnreadableDependabotConfigIsKeptAndGetsATodo() async throws {
+        let root = try makeRepo()
+        let existing = Data([0xFF, 0xFE, 0x00])
+        try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+        try existing.write(to: root.appending(path: ".github/dependabot.yml"))
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try Data(contentsOf: root.appending(path: ".github/dependabot.yml")) == existing)
+        #expect(todo.contains { $0.hasPrefix("Add an entry to `.github/dependabot.yml`") })
+    }
+
+    @Test func aDependabotConfigWithoutGithubActionsGetsATodo() async throws {
+        let root = try makeRepo()
+        let existing = "version: 2\nupdates:\n  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n"
+        try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+        try existing.write(to: root.appending(path: ".github/dependabot.yml"), atomically: true, encoding: .utf8)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yml"), encoding: .utf8) == existing)
+        #expect(todo.contains { $0.hasPrefix("Add an entry to `.github/dependabot.yml`") })
     }
 
     @Test func changedFilesAreKeptUnlessForced() async throws {
@@ -126,33 +254,15 @@ struct RepoSetupTests {
         #expect(try String(contentsOf: rule, encoding: .utf8) != "custom")
     }
 
-    @Test func installActionPicksTheArchiveForTheRunner() {
-        let pinned = Templates.files(version: "1.2.3", checksums: [
-            "xcflow-1.2.3-linux-x86_64.tar.gz": "2" + String(repeating: "0", count: 63),
-            "xcflow-1.2.3-linux-aarch64.tar.gz": "3" + String(repeating: "0", count: 63)
-        ]).first { $0.path == ".github/actions/xcflow/action.yml" }?.content ?? ""
-        #expect(pinned.contains("releases/download/v1.2.3/$NAME"))
-        #expect(pinned.contains(#"Linux-X64) NAME="xcflow-1.2.3-linux-x86_64.tar.gz"; SUM="2"#))
-        #expect(pinned.contains(#"Linux-ARM64) NAME="xcflow-1.2.3-linux-aarch64.tar.gz"; SUM="3"#))
-        #expect(!pinned.contains("macOS-"))
-        #expect(!pinned.contains("xcflow-1.2.3.tar.gz"))
-        #expect(pinned.contains("Linux runners only"))
-        #expect(!pinned.contains("{{"))
-
-        let unpinned = Templates.files(version: "1.2.3", checksums: [:]).first { $0.path == ".github/actions/xcflow/action.yml" }?.content ?? ""
-        #expect(unpinned.contains(#"SUM="" ;;"#))
-        #expect(!unpinned.contains("{{"))
-    }
-
     @Test func generatedActionsPinTheCurrentCheckout() {
-        let generated = Templates.files(version: "1.2.3", checksums: [:]).filter { $0.path.hasPrefix(".github/") }
+        let generated = Templates.files(action: ActionPin(version: "1.2.3", commit: sha)).filter { $0.path.hasPrefix(".github/") }
         let pins = generated.flatMap { $0.content.matches(of: /actions\/checkout@v\d+/).map { String($0.output) } }
         #expect(pins.count == 3)
         #expect(pins.allSatisfy { $0 == "actions/checkout@v7" })
     }
 
     @Test func workflowsRunOnLinux() {
-        let workflows = Templates.files(version: "1.2.3", checksums: [:]).filter { $0.path.hasPrefix(".github/workflows/") }
+        let workflows = Templates.files(action: ActionPin(version: "1.2.3", commit: sha)).filter { $0.path.hasPrefix(".github/workflows/") }
         #expect(workflows.count == 3)
         #expect(workflows.allSatisfy { $0.content.contains("runs-on: ubuntu-latest") && !$0.content.contains("macos") })
     }
@@ -184,14 +294,8 @@ struct RepoSetupTests {
         #expect(decision.question != nil)
     }
 
-    @Test func checksumFilesAreParsed() {
-        let sha = String(repeating: "b", count: 64)
-        let parsed = RepoSetup.parseChecksums("\(sha)  xcflow-1.2.3.tar.gz\n\(sha) *xcflow-1.2.3-linux-x86_64.tar.gz\nnot a checksum line\n")
-        #expect(parsed == ["xcflow-1.2.3.tar.gz": sha, "xcflow-1.2.3-linux-x86_64.tar.gz": sha])
-    }
-
     private func setupTodo(_ root: URL, _ extra: [String], client: AppStoreConnectClient? = nil) async throws -> [String] {
-        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--skip-secrets", "--checksums", try checksumsFile()] + extra, client: client)
+        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--skip-secrets", "--action-sha", sha] + extra, client: client, interactive: false)
     }
 
     @Test func setupWithoutAManifestExplainsTheFirstTimeSetupAndStillWritesTheFiles() async throws {
@@ -285,6 +389,129 @@ struct RepoSetupTests {
             return "no error"
         } catch {
             return error.localizedDescription
+        }
+    }
+
+    private func writeLegacyAction(in root: URL, edited: Bool = false) throws {
+        let url = root.appending(path: LegacyAction.path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let content = LegacyAction.render(version: "0.2.6", checksums: ["xcflow-0.2.6-linux-x86_64.tar.gz": String(repeating: "1", count: 64), "xcflow-0.2.6-linux-aarch64.tar.gz": String(repeating: "2", count: 64)])
+        try (edited ? content + "# edited\n" : content).write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    @Test func setupRemovesAnUntouchedLegacyAction() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: ".github/actions").path(percentEncoded: false)))
+        #expect(!todo.contains { $0.contains(".github/actions/xcflow") })
+    }
+
+    @Test func setupKeepsAnEditedLegacyActionWithATodo() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root, edited: true)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false)))
+        #expect(todo.contains { $0.hasPrefix("Remove `.github/actions/xcflow/`") })
+    }
+
+    @Test func forceRemovesAnEditedLegacyAction() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root, edited: true)
+        _ = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--force"])
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false)))
+    }
+
+    @Test func dryRunLeavesTheLegacyAction() async throws {
+        let root = try makeRepo()
+        try writeLegacyAction(in: root)
+        _ = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--dry-run"])
+        #expect(FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false)))
+    }
+
+    /// A workflow as an older xcflow wrote it: installing xcflow from the local action.
+    private func writeLocalActionWorkflow(in root: URL, at path: String) throws {
+        let url = root.appending(path: path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let text = "name: Old\non: push\njobs:\n  run:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/xcflow\n"
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func writeOldRepo(in root: URL) throws {
+        try writeLegacyAction(in: root)
+        for name in ["plan", "apply", "sync"] {
+            try writeLocalActionWorkflow(in: root, at: ".github/workflows/xcflow-\(name).yml")
+        }
+    }
+
+    private func legacyActionExists(in root: URL) -> Bool {
+        FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false))
+    }
+
+    @Test func theLegacyActionIsKeptWhileKeptWorkflowsStillUseIt() async throws {
+        let root = try makeRepo()
+        try writeOldRepo(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(legacyActionExists(in: root))
+        #expect(todo.contains { $0.contains("then remove `.github/actions/xcflow/`") && $0.contains(".github/workflows/xcflow-plan.yml") })
+    }
+
+    @Test func theLegacyActionIsRemovedOnceTheWorkflowsAreRewritten() async throws {
+        let root = try makeRepo()
+        try writeOldRepo(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--yes"])
+        #expect(!legacyActionExists(in: root))
+        for name in ["plan", "apply", "sync"] {
+            #expect(try String(contentsOf: root.appending(path: ".github/workflows/xcflow-\(name).yml"), encoding: .utf8).contains("uses: OlafAndreas/xcflow-action@"))
+        }
+        #expect(!todo.contains { $0.contains("then remove `.github/actions/xcflow/`") })
+    }
+
+    @Test func aDryRunWithYesReportsTheLegacyActionAsRemoved() async throws {
+        let root = try makeRepo()
+        try writeOldRepo(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--dry-run", "--yes"])
+        #expect(legacyActionExists(in: root))
+        #expect(!todo.contains { $0.contains("then remove `.github/actions/xcflow/`") })
+    }
+
+    @Test func anotherWorkflowUsingTheLegacyActionKeepsItUnlessForced() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try writeLegacyAction(in: root)
+        try writeLocalActionWorkflow(in: root, at: ".github/workflows/other.yml")
+        let kept = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(legacyActionExists(in: root))
+        #expect(kept.contains { $0.contains("then remove `.github/actions/xcflow/`") && $0.contains(".github/workflows/other.yml") && !$0.contains("xcflow-plan.yml") })
+
+        let forced = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--force"])
+        #expect(!legacyActionExists(in: root))
+        #expect(forced.contains { $0.contains("then remove `.github/actions/xcflow/`") && $0.contains(".github/workflows/other.yml") })
+    }
+
+    @Test func aTagPinKeepsItsTodoOnceTheTagResolves() async throws {
+        let root = try makeRepo()
+        try await RepoSetup.run(
+            arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets"],
+            resolveActionCommit: { _ in nil }, interactive: false)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+        #expect(try plan(root).contains("uses: OlafAndreas/xcflow-action@v\(Version.current)\n"))
+        #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action`") && $0.contains(".github/workflows/xcflow-plan.yml") && $0.contains("still reference the tag") })
+        #expect(!todo.contains { $0.contains("the lookup failed") })
+    }
+
+    @Test func anExistingDependabotYamlIsUsedInsteadOfCreatingYml() async throws {
+        for (existing, todoExpected) in [
+            ("version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n", false),
+            ("version: 2\nupdates:\n  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n", true)
+        ] {
+            let root = try makeRepo()
+            try FileManager.default.createDirectory(at: root.appending(path: ".github"), withIntermediateDirectories: true)
+            try existing.write(to: root.appending(path: ".github/dependabot.yaml"), atomically: true, encoding: .utf8)
+            let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: ".github/dependabot.yml").path(percentEncoded: false)))
+            #expect(try String(contentsOf: root.appending(path: ".github/dependabot.yaml"), encoding: .utf8) == existing)
+            #expect(todo.contains { $0.hasPrefix("Add an entry to `.github/dependabot.yaml`") } == todoExpected)
         }
     }
 }

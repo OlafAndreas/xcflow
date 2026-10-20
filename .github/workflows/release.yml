@@ -85,6 +85,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
       - name: Download the archives
         uses: actions/download-artifact@v4
         with:
@@ -102,6 +105,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "xcflow ${GITHUB_REF_NAME#v}" --generate-notes
+
+      - name: Publish the install action
+        env:
+          ACTION_TOKEN: ${{ secrets.ACTION_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          X86=$(grep "xcflow-$VERSION-linux-x86_64.tar.gz" dist/checksums.txt | cut -d ' ' -f 1)
+          ARM=$(grep "xcflow-$VERSION-linux-aarch64.tar.gz" dist/checksums.txt | cut -d ' ' -f 1)
+          test -n "$X86" -a -n "$ARM" || { echo "::error::Linux checksums missing from checksums.txt."; exit 1; }
+          git clone "https://x-access-token:${ACTION_TOKEN}@github.com/OlafAndreas/xcflow-action.git" action
+          sed -e "s/{{version}}/$VERSION/g" \
+              -e "s/{{archive-linux-x86_64}}/xcflow-$VERSION-linux-x86_64.tar.gz/g" -e "s/{{checksum-linux-x86_64}}/$X86/g" \
+              -e "s/{{archive-linux-aarch64}}/xcflow-$VERSION-linux-aarch64.tar.gz/g" -e "s/{{checksum-linux-aarch64}}/$ARM/g" \
+              Action/action.yml > action/action.yml
+          if grep -q "{{" action/action.yml; then echo "::error::A placeholder in action.yml wasn't filled."; exit 1; fi
+          cp Action/README.md LICENSE action/
+          cd action
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add action.yml README.md LICENSE
+          git commit -m "xcflow $VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD:main "v$VERSION"
 
       - name: Update the Homebrew formula
         env:
@@ -150,6 +176,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Checkout the install action at this tag
+        uses: actions/checkout@v7
+        with:
+          repository: OlafAndreas/xcflow-action
+          ref: refs/tags/${{ github.ref_name }}
+          path: action
+
       - name: Set up a repo with the released xcflow
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,18 +197,21 @@ jobs:
           tar -xzf "$RUNNER_TEMP/bootstrap/$NAME" -C "$RUNNER_TEMP/bootstrap"
           mkdir smoke
           "$RUNNER_TEMP/bootstrap/xcflow" setup --repo smoke --products com.example.app --skip-export --skip-secrets | tee setup.txt
-          if grep -q "Add the release checksums" setup.txt; then echo "::error::setup didn't find the release checksums."; exit 1; fi
+          SHA=$(git -C action rev-parse HEAD)
+          for WF in plan apply sync; do
+            grep -q "uses: OlafAndreas/xcflow-action@$SHA # v$VERSION" "smoke/.github/workflows/xcflow-$WF.yml" || { echo "::error::xcflow-$WF.yml doesn't pin the published action at $SHA."; exit 1; }
+          done
+          test -f smoke/.github/dependabot.yml || { echo "::error::setup didn't write .github/dependabot.yml."; exit 1; }
+          test ! -e smoke/.github/actions || { echo "::error::setup still wrote .github/actions/."; exit 1; }
 
-      - name: Install xcflow with the generated action
+      - name: Install xcflow with the published action
         if: runner.os == 'Linux'
-        uses: ./smoke/.github/actions/xcflow
+        uses: ./action
 
-      # The generated action is Linux-only. On macOS, check the archive that Homebrew installs instead.
+      # The published action is Linux-only. On macOS, check the archive that Homebrew installs instead.
       - name: Use the macOS archive
         if: runner.os == 'macOS'
-        run: |
-          echo "$RUNNER_TEMP/bootstrap" >> "$GITHUB_PATH"
-          if grep -q "macOS" smoke/.github/actions/xcflow/action.yml; then echo "::error::The generated install action mentions macOS."; exit 1; fi
+        run: echo "$RUNNER_TEMP/bootstrap" >> "$GITHUB_PATH"
 
       - name: Run xcflow from the install
         run: |
