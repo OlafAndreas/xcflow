@@ -77,6 +77,56 @@ struct RepoSetupTests {
         #expect(files(in: root).isEmpty)
     }
 
+    /// Rewrites the `uses:` line of all three workflows.
+    private func repin(_ root: URL, to uses: String) throws {
+        for name in ["plan", "apply", "sync"] {
+            let url = root.appending(path: ".github/workflows/xcflow-\(name).yml")
+            let text = try String(contentsOf: url, encoding: .utf8)
+            try text.replacing(/uses: OlafAndreas\/xcflow-action@.*/, with: "uses: \(uses)").write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    private func plan(_ root: URL) throws -> String {
+        try String(contentsOf: root.appending(path: ".github/workflows/xcflow-plan.yml"), encoding: .utf8)
+    }
+
+    @Test func aNewerPinIsKeptEvenWithYes() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        let newer = "OlafAndreas/xcflow-action@\(String(repeating: "b", count: 40)) # v99.0.0"
+        try repin(root, to: newer)
+        try await setup(root, ["--yes"])
+        for name in ["plan", "apply", "sync"] {
+            #expect(try String(contentsOf: root.appending(path: ".github/workflows/xcflow-\(name).yml"), encoding: .utf8).contains("uses: \(newer)\n"))
+        }
+    }
+
+    @Test func anOlderPinIsUpdated() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try repin(root, to: "OlafAndreas/xcflow-action@\(String(repeating: "b", count: 40)) # v0.0.1")
+        try await setup(root, ["--yes"])
+        #expect(try plan(root).contains("@\(sha) # v\(Version.current)"))
+    }
+
+    @Test func forceWritesTheCurrentPinOverANewerOne() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try repin(root, to: "OlafAndreas/xcflow-action@\(String(repeating: "b", count: 40)) # v99.0.0")
+        try await setup(root, ["--force"])
+        #expect(try plan(root).contains("@\(sha) # v\(Version.current)"))
+    }
+
+    @Test func aForeignInstallStepIsADifference() async throws {
+        let root = try makeRepo()
+        try await setup(root)
+        try repin(root, to: "someone/other-action@v1")
+        try await setup(root)
+        #expect(try plan(root).contains("uses: someone/other-action@v1\n"))
+        try await setup(root, ["--yes"])
+        #expect(try plan(root).contains("@\(sha) # v\(Version.current)"))
+    }
+
     @Test func workflowsInstallFromThePinnedAction() async throws {
         let root = try makeRepo()
         try await setup(root)

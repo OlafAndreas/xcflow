@@ -85,7 +85,8 @@ enum RepoSetup {
         if pin.commit == nil {
             todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in the three workflows once the tag exists; the lookup failed (offline, or not released yet).")
         }
-        for file in Templates.files(action: pin) {
+        for generated in Templates.files(action: pin) {
+            let file = keepingNewerPin(generated, in: root, current: pin, force: options.force)
             let status = try write(file, in: root, force: options.force, dryRun: options.dryRun, prompt: prompt)
             print(describe(file.path, status, dryRun: options.dryRun))
         }
@@ -114,6 +115,19 @@ enum RepoSetup {
     }
 
     // MARK: - Files
+
+    /// The workflow as it should be written: with the current pin, unless the file already pins a newer version and --force wasn't given.
+    static func keepingNewerPin(_ file: Templates.File, in root: URL, current: ActionPin, force: Bool) -> Templates.File {
+        guard !force, file.path.hasPrefix(".github/workflows/"),
+              let text = try? String(contentsOf: root.appending(path: file.path), encoding: .utf8),
+              let existing = ActionPin.parse(text),
+              ActionPin.isNewer(existing.version, than: current.version),
+              let kept = Templates.files(action: existing).first(where: { $0.path == file.path })
+        else {
+            return file
+        }
+        return kept
+    }
 
     static func write(_ file: Templates.File, in root: URL, force: Bool, dryRun: Bool, prompt: Prompt) throws -> FileStatus {
         let url = root.appending(path: file.path)
