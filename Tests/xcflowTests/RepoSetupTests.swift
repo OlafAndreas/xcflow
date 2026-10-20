@@ -467,6 +467,14 @@ struct RepoSetupTests {
         #expect(!todo.contains { $0.contains("then remove `.github/actions/xcflow/`") })
     }
 
+    @Test func aDryRunWithYesReportsTheLegacyActionAsRemoved() async throws {
+        let root = try makeRepo()
+        try writeOldRepo(in: root)
+        let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export", "--dry-run", "--yes"])
+        #expect(legacyActionExists(in: root))
+        #expect(!todo.contains { $0.contains("then remove `.github/actions/xcflow/`") })
+    }
+
     @Test func anotherWorkflowUsingTheLegacyActionKeepsItUnlessForced() async throws {
         let root = try makeRepo()
         try await setup(root)
@@ -488,7 +496,8 @@ struct RepoSetupTests {
             resolveActionCommit: { _ in nil }, interactive: false)
         let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
         #expect(try plan(root).contains("uses: OlafAndreas/xcflow-action@v\(Version.current)\n"))
-        #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action`") })
+        #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action`") && $0.contains(".github/workflows/xcflow-plan.yml") && $0.contains("still reference the tag") })
+        #expect(!todo.contains { $0.contains("the lookup failed") })
     }
 
     @Test func anExistingDependabotYamlIsUsedInsteadOfCreatingYml() async throws {

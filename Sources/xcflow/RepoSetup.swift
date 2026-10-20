@@ -82,7 +82,7 @@ enum RepoSetup {
         try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, todo: &todo)
 
         let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))
-        var keptTagPin = false
+        var keptTagPins: [String] = []
         var rewritten: Set<String> = []
         for generated in Templates.files(action: pin) {
             let file = keepingNewerPin(generated, in: root, current: pin, force: options.force)
@@ -93,11 +93,13 @@ enum RepoSetup {
             } else if status == .keptDifferent, pin.commit != nil,
                       let text = try? String(contentsOf: root.appending(path: file.path), encoding: .utf8),
                       let existing = ActionPin.parse(text), existing.commit == nil {
-                keptTagPin = true
+                keptTagPins.append(file.path)
             }
         }
-        if pin.commit == nil || keptTagPin {
+        if pin.commit == nil {
             todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in the three workflows once the tag exists; the lookup failed (offline, or not released yet).")
+        } else if !keptTagPins.isEmpty {
+            todo.append("Pin `\(ActionPin.repository)` to its commit for v\(Version.current) in \(keptTagPins.joined(separator: ", ")), which still reference the tag: run `xcflow setup --yes`.")
         }
         // A workflow that still installs xcflow from the local action would break without it, so the action stays unless --force.
         let hasLegacyAction = FileManager.default.fileExists(atPath: root.appending(path: LegacyAction.path).path(percentEncoded: false))
@@ -185,7 +187,7 @@ enum RepoSetup {
         guard current != file.content else {
             return .unchanged
         }
-        guard force || (!dryRun && prompt.ask("\(file.path) differs from xcflow's version. Overwrite it?")) else {
+        guard force || prompt.ask("\(file.path) differs from xcflow's version. Overwrite it?") else {
             return .keptDifferent
         }
         if !dryRun {
