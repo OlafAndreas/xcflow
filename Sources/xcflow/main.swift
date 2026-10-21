@@ -21,6 +21,8 @@ case "--version", "version":
     exit(0)
 case "auth":
     await runOrExit("auth") { try await Auth.run(arguments: Array(arguments.dropFirst())) }
+case "keys":
+    exit(KeysCommand.run(arguments: Array(arguments.dropFirst())))
 case "setup":
     await runOrExit("setup") { _ = try await RepoSetup.run(arguments: Array(arguments.dropFirst())) }
 case "get" where arguments.count >= 2:

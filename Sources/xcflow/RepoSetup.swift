@@ -71,32 +71,52 @@ enum RepoSetup {
         resolveActionCommit: @Sendable (String) -> String? = resolveActionCommit,
         secrets: any SecretStore = GitHubSecrets(),
         keys: any KeyStore = KeychainKeyStore(),
-        interactive: Bool = isatty(STDIN_FILENO) == 1
+        interactive: Bool = isatty(STDIN_FILENO) == 1,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        connect: (Credentials) throws -> AppStoreConnectClient = { AppStoreConnectClient(tokens: try TokenProvider(credentials: $0)) },
+        input: @escaping () -> String? = { readLine() }
     ) async throws -> [String] {
         let options = try Options(arguments: arguments)
         let root = try options.repo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? gitRoot()
-        let prompt = Prompt(yes: options.yes, dryRun: options.dryRun, interactive: interactive)
+        let prompt = Prompt(yes: options.yes, dryRun: options.dryRun, interactive: interactive, input: input)
         var key = try options.hasWholeKey ? askForTeamKey(options, prompt: prompt) : nil
         let workflows = root.appending(path: "XcodeCloud")
+        let repoFile = workflows.appending(path: "xcflow.json")
+        let pinned = try RepoKeyFile.read(repoFile)
         let rootPath = root.standardizedFileURL.path(percentEncoded: false).replacing(/\/$/, with: "")
         print(options.dryRun ? "Dry run of xcflow setup in \(rootPath). Nothing is written or sent.\n" : "Setting up xcflow in \(rootPath).\n")
 
         // One team key does everything: the export now, xcflow on this machine, and the GitHub secrets.
-        let stored = try? keys.load()
-        if key == nil, stored == nil {
-            if options.dryRun {
-                print("Would ask for a team App Store Connect API key, since none is stored, and keep it in the Keychain.\n")
-            } else if interactive {
-                print(teamKeyIntro)
-                key = try askForTeamKey(options, prompt: prompt)
+        // A key given with the flags wins; otherwise setup picks it the way every command does.
+        var stored: Credentials?
+        var storedFromEnvironment = false
+        var keyProblem: String?
+        if key == nil {
+            switch try findKey(options, pinned: pinned, keys: keys, environment: environment, prompt: prompt) {
+            case .none:
+                if options.dryRun {
+                    print("Would ask for a team App Store Connect API key, since none is stored, and keep it in the Keychain.\n")
+                } else if interactive {
+                    print(teamKeyIntro)
+                    key = try askForTeamKey(options, prompt: prompt)
+                }
+            case .new(let new):
+                key = new
+            case .found(let credentials, let fromEnvironment):
+                stored = credentials
+                storedFromEnvironment = fromEnvironment
+            case .problem(let message):
+                keyProblem = message
             }
         }
         if let key, !options.dryRun {
             try keys.save(key.credentials)
             print("Stored key \(key.keyID) in the Keychain for xcflow's own use.\n")
         }
+        // Only a Keychain key is pinned: another machine couldn't load one that came from the ASC_* variables.
+        let keyToPin = key?.keyID ?? (storedFromEnvironment ? nil : stored?.keyID)
         var todo: [String] = []
-        try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, credentials: key?.credentials ?? stored, todo: &todo)
+        try await exportProducts(options, root: root, workflows: workflows, prompt: prompt, client: client, connect: connect, credentials: key?.credentials ?? stored, keyProblem: keyProblem, todo: &todo)
 
         let pin = ActionPin(version: Version.current, commit: options.actionSHA ?? resolveActionCommit(Version.current))
         var keptTagPins: [String] = []
@@ -111,6 +131,15 @@ enum RepoSetup {
                       let text = try? String(contentsOf: root.appending(path: file.path), encoding: .utf8),
                       let existing = ActionPin.parse(text), existing.commit == nil {
                 keptTagPins.append(file.path)
+            }
+        }
+        if let keyToPin {
+            let status = try pinKey(keyToPin, at: repoFile, force: options.force, dryRun: options.dryRun)
+            if status == .keptDifferent, let pinned {
+                print("Kept \(RepoKeyFile.displayPath), which names key \(pinned)")
+                todo.append("`\(RepoKeyFile.displayPath)` names key \(pinned), but setup used \(keyToPin). Keep it, or switch with `xcflow keys use \(keyToPin)` (or `xcflow setup --force`).")
+            } else {
+                print(describe(RepoKeyFile.displayPath, status, dryRun: options.dryRun))
             }
         }
         if pin.commit == nil {
@@ -159,8 +188,11 @@ enum RepoSetup {
             if let question = decision.question {
                 if let key {
                     try setSecrets(in: root, key: key, store: secrets)
-                } else if let stored, let issuerID = stored.issuerID, prompt.ask("Set them from the stored key \(stored.keyID)?") {
+                } else if let stored, let issuerID = stored.issuerID,
+                          prompt.ask(storedFromEnvironment ? "Set them from the key \(stored.keyID) in the ASC_* environment variables?" : "Set them from the stored key \(stored.keyID)?") {
                     try setSecrets(in: root, key: TeamKey(keyID: stored.keyID, issuerID: issuerID, pem: Data(stored.privateKeyPEM.utf8)), store: secrets)
+                } else if let keyProblem {
+                    todo.append("\(keyProblem) Then set the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo by running `xcflow setup` again.")
                 } else if prompt.ask(question) {
                     guard let asked = try askForTeamKey(options, prompt: prompt) else {
                         throw ToolError.refused("The key id, issuer id and .p8 path are all needed to set the secrets. Pass --key-id, --issuer-id and --p8, or run setup in a terminal to be asked for them.")
@@ -179,6 +211,79 @@ enum RepoSetup {
         print("\nStill to do:")
         print(todo.map { "- \($0)" }.joined(separator: "\n"))
         return todo
+    }
+
+    // MARK: - The repo's key
+
+    enum FoundKey {
+        case none
+        case new(TeamKey)
+        case found(Credentials, fromEnvironment: Bool)
+        /// No key can be used, and why, with what to run.
+        case problem(String)
+    }
+
+    /// The key setup uses when the flags don't give a whole one: `--key-id` naming a stored key, else the selection every command makes, asking in a terminal when several are stored and the repo names none.
+    private static func findKey(_ options: Options, pinned: String?, keys: any KeyStore, environment: [String: String], prompt: Prompt) throws -> FoundKey {
+        let stored = try keys.keys()
+        if let keyID = options.keyID, stored.contains(where: { $0.keyID == keyID }) {
+            return .found(try keys.load(keyID: keyID), fromEnvironment: false)
+        }
+        let choice: KeySelection.Choice
+        do {
+            choice = try KeySelection.choose(environment: environment, pinned: pinned, stored: stored)
+        } catch CredentialError.missing {
+            return .none
+        } catch {
+            guard pinned == nil, stored.count > 1 else {
+                return .problem(error.localizedDescription)
+            }
+            return try pickKey(among: stored, options: options, keys: keys, prompt: prompt) ?? .problem(error.localizedDescription)
+        }
+        switch choice {
+        case .environment(let credentials):
+            return .found(credentials, fromEnvironment: true)
+        case .stored(let keyID):
+            return .found(try keys.load(keyID: keyID), fromEnvironment: false)
+        }
+    }
+
+    /// Asks which of several stored keys this repo uses, or for a new one. Nil without a terminal, in a dry run, or without an answer.
+    private static func pickKey(among stored: [StoredKey], options: Options, keys: any KeyStore, prompt: Prompt) throws -> FoundKey? {
+        let list = stored.map { "\($0.keyID) \($0.isTeamKey ? "team" : "individual")" }.joined(separator: ", ")
+        if options.dryRun {
+            print("Would ask which of the stored keys (\(list)) this repo uses, or for a new one, and pin it in \(RepoKeyFile.displayPath).\n")
+            return nil
+        }
+        guard prompt.interactive else { return nil }
+        print("Several App Store Connect keys are stored, and this repo doesn't name one yet. Which does it use?")
+        for (index, key) in stored.enumerated() {
+            print("  \(index + 1). \(key.keyID)  \(key.isTeamKey ? "team" : "individual")")
+        }
+        print("  \(stored.count + 1). A new key")
+        guard let answer = prompt.read("Key [1-\(stored.count + 1)]:"), let number = Int(answer) else { return nil }
+        if stored.indices.contains(number - 1) {
+            print("")
+            return .found(try keys.load(keyID: stored[number - 1].keyID), fromEnvironment: false)
+        }
+        guard number == stored.count + 1 else { return nil }
+        print(newKeyIntro)
+        return try askForTeamKey(options, prompt: prompt).map(FoundKey.new)
+    }
+
+    /// Writes the repo's key pin: created when there is none, unchanged when it names this key, kept when it names another unless `force`.
+    static func pinKey(_ keyID: String, at url: URL, force: Bool, dryRun: Bool) throws -> FileStatus {
+        let current = try RepoKeyFile.read(url)
+        if current == keyID {
+            return .unchanged
+        }
+        if current != nil, !force {
+            return .keptDifferent
+        }
+        if !dryRun {
+            try RepoKeyFile.write(keyID, to: url)
+        }
+        return current == nil ? .created : .overwritten
     }
 
     // MARK: - Files
@@ -285,7 +390,17 @@ enum RepoSetup {
     }
 
     /// Exports the products' workflows into XcodeCloud/, or says what stands in the way. Setup carries on either way, so the repo is ready the moment the product exists.
-    private static func exportProducts(_ options: Options, root: URL, workflows: URL, prompt: Prompt, client: AppStoreConnectClient?, credentials: Credentials?, todo: inout [String]) async throws {
+    private static func exportProducts(
+        _ options: Options,
+        root: URL,
+        workflows: URL,
+        prompt: Prompt,
+        client: AppStoreConnectClient?,
+        connect: (Credentials) throws -> AppStoreConnectClient,
+        credentials: Credentials?,
+        keyProblem: String?,
+        todo: inout [String]
+    ) async throws {
         let existing = existingProducts(in: workflows)
         let products = options.products ?? existing
         let bundleIDs: [String]
@@ -315,12 +430,15 @@ enum RepoSetup {
             todo.append("Export the workflows of \(described) with `\(command)`.")
         } else if options.dryRun {
             print("Would export the live workflows of \(described) from App Store Connect.")
+        } else if client == nil, credentials == nil, let keyProblem {
+            print("\(keyProblem) The workflows weren't exported.", terminator: "\n\n")
+            todo.append("\(keyProblem) Then run `\(command)`.")
         } else if client == nil, credentials == nil {
             print("No App Store Connect API key is stored, so the workflows weren't exported. Pass --key-id, --issuer-id and --p8 with a team key, or run `xcflow auth` first.", terminator: "\n\n")
             todo.append("Store a team key with `xcflow setup --key-id <id> --issuer-id <id> --p8 <path>` (or `xcflow auth`), then run `\(command)`.")
         } else if prompt.ask("Export the live workflows of \(described) from App Store Connect into XcodeCloud/?") {
             do {
-                let client = try client ?? AppStoreConnectClient(tokens: TokenProvider(credentials: credentials!))
+                let client = try client ?? connect(credentials!)
                 print(try await WorkflowSync(client: client, root: workflows).export(bundleIDs: bundleIDs))
             } catch {
                 print("Export failed: \(error.localizedDescription)", terminator: "\n\n")
@@ -398,6 +516,10 @@ enum RepoSetup {
     Create one in App Store Connect under Users and Access → Integrations → Team Keys, with the Admin role or App Manager with Xcode Cloud access.
     """
 
+    private static let newKeyIntro = """
+    A new key: create it in App Store Connect under Users and Access → Integrations → Team Keys, with the Admin role or App Manager with Xcode Cloud access.
+    """
+
     /// The key from the flags, asking for whatever is missing when there is a terminal. Nil when something is missing and there isn't.
     private static func askForTeamKey(_ options: Options, prompt: Prompt) throws -> TeamKey? {
         guard let keyID = options.keyID ?? prompt.read("Team key id:"),
@@ -466,11 +588,14 @@ struct Prompt {
     let yes: Bool
     let dryRun: Bool
     let interactive: Bool
+    /// Where answers come from: the terminal, or a test's script.
+    let input: () -> String?
 
-    init(yes: Bool, dryRun: Bool, interactive: Bool = isatty(STDIN_FILENO) == 1) {
+    init(yes: Bool, dryRun: Bool, interactive: Bool = isatty(STDIN_FILENO) == 1, input: @escaping () -> String? = { readLine() }) {
         self.yes = yes
         self.dryRun = dryRun
         self.interactive = interactive
+        self.input = input
     }
 
     func ask(_ question: String) -> Bool {
@@ -481,7 +606,7 @@ struct Prompt {
             return false
         }
         print("\(question) [y/N] ", terminator: "")
-        return readLine()?.lowercased().hasPrefix("y") == true
+        return input()?.lowercased().hasPrefix("y") == true
     }
 
     func read(_ question: String) -> String? {
@@ -489,7 +614,7 @@ struct Prompt {
             return nil
         }
         print("\(question) ", terminator: "")
-        let answer = readLine()?.trimmingCharacters(in: .whitespaces) ?? ""
+        let answer = input()?.trimmingCharacters(in: .whitespaces) ?? ""
         return answer.isEmpty ? nil : answer
     }
 }

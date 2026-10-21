@@ -13,7 +13,7 @@ enum KeySelection {
         }
         if let pinned {
             guard stored.contains(where: { $0.keyID == pinned }) else {
-                throw CredentialError.environment("This repo uses key \(pinned) (XcodeCloud/xcflow.json), which isn't stored on this machine. Store it with: xcflow auth --key-id \(pinned) --issuer-id <issuer> --p8 <path>.")
+                throw CredentialError.environment("This repo uses key \(pinned) (\(RepoKeyFile.displayPath)), which isn't stored on this machine. Store it with: xcflow auth --key-id \(pinned) --issuer-id <issuer> --p8 <path>.")
             }
             return .stored(keyID: pinned)
         }
@@ -32,6 +32,9 @@ enum KeySelection {
 }
 
 enum RepoKeyFile {
+    /// How messages name the file.
+    static let displayPath = "XcodeCloud/xcflow.json"
+
     private struct Contents: Codable {
         let keyID: String
     }
@@ -54,7 +57,7 @@ enum RepoKeyFile {
               let contents = try? JSONDecoder().decode(Contents.self, from: data),
               !contents.keyID.isEmpty
         else {
-            throw CredentialError.environment("XcodeCloud/xcflow.json isn't valid: expected {\"keyID\": \"…\"}.")
+            throw CredentialError.environment("\(displayPath) isn't valid: expected {\"keyID\": \"…\"}.")
         }
         return contents.keyID
     }
