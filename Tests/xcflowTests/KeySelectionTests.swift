@@ -47,7 +47,7 @@ import Testing
     private let cwd = URL(filePath: "/work/here", directoryHint: .isDirectory)
 
     /// git answering from a table of (directory, first argument) → output, and recording where it ran.
-    private func git(_ answers: [String: String]) -> KeyPins.Git {
+    private func git(_ answers: [String: String]) -> RepoIdentity.Git {
         { directory, arguments in answers["\(directory.path(percentEncoded: false))|\(arguments[0])"] }
     }
 
@@ -91,7 +91,7 @@ import Testing
             "https://user:token@github.com/Team/App/",
             "ssh://git@github.com/team/app"
         ]
-        #expect(Set(remotes.map(KeyPins.normalizedRemote)) == ["github.com/team/app"])
+        #expect(Set(remotes.map(RepoIdentity.normalizedRemote)) == ["github.com/team/app"])
     }
 
     // MARK: the store

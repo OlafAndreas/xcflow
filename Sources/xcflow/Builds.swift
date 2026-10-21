@@ -17,7 +17,7 @@ extension XcodeCloudTools {
     var builds: Builds {
         Builds { [apps] client in
             let all = try await client.products()
-            let chosen = try await apps.chosenApps(from: Self.appNames(of: all))
+            let chosen = try await apps.chosenApps(of: all)
             return all.filter { chosen.contains($0.name) }
         }
     }
