@@ -86,6 +86,18 @@ Run with no command, xcflow is an MCP server. `setup` registers it in `.mcp.json
 - **Workflows:** `get_workflow` shows the live configuration and the file that defines it, and `list_environments` lists the Xcode and macOS versions. The MCP server never changes workflows; that goes through the files.
 - **Apps:** the first time a tool runs, you choose which apps it shows. `choose_apps` changes the choice.
 
+## Roadmap
+
+Where xcflow is heading, roughly in order. Contributions are welcome: open an issue to talk an item through before building it, or send a pull request.
+
+- **Build runs from the command line and CI.** The MCP server can already list builds, summarise one with its compiler errors and failing tests, download its logs, and start a build of a workflow on a branch. The same as `xcflow builds`, `xcflow build <number>`, `xcflow logs <number>` and `xcflow run <workflow> --branch <name>`, so a script, a GitHub workflow or a developer at a terminal can do what an agent can.
+- **Validation against the live catalog.** `plan` lists the Xcode and macOS version names when one is unknown. Next: reject a scheme the project doesn't have, and support `"xcodeVersion": "latest"` resolved when applied, so a workflow file doesn't go stale when Apple ships a new Xcode.
+- **Presets.** `xcflow add pr-checks`, `nightly-tests` or `testflight-on-tag` scaffolds a workflow file from the project's schemes, so the second workflow is one command away.
+- **Seeding from CI.** A reusable workflow next to the install action, so a repo gets xcflow from a five-line workflow and a dispatch, and an organization workflow template so it shows on every repo's "New workflow" page.
+- **Smaller onboarding gaps.** `setup` warning on a private repo that Dependabot needs the dependency graph switched on, and a homebrew-core formula once the project qualifies, so `brew install xcflow` works without naming the tap.
+
+Not planned: managing TestFlight testers or groups, which are people and drift that don't belong in git, and creating an app's first Xcode Cloud workflow, which the App Store Connect API doesn't allow.
+
 ## License
 
 MIT
