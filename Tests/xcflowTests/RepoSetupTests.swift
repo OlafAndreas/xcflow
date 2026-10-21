@@ -23,24 +23,6 @@ struct RepoSetupTests {
             .sorted()
     }
 
-    /// Stands in for the Keychain; starts empty or with one stored key.
-    final class FakeKeys: KeyStore, @unchecked Sendable {
-        var stored: Credentials?
-
-        init(_ stored: Credentials? = nil) {
-            self.stored = stored
-        }
-
-        func load() throws -> Credentials {
-            guard let stored else { throw CredentialError.missing }
-            return stored
-        }
-
-        func save(_ credentials: Credentials) throws {
-            stored = credentials
-        }
-    }
-
     /// Stands in for `gh secret`; records what setup would have set.
     final class FakeSecrets: SecretStore, @unchecked Sendable {
         var existing: Set<String>
