@@ -63,8 +63,11 @@ extension CannedAPISuites {
             return root.path(percentEncoded: false)
         }
 
-        private func run(_ command: String, _ arguments: [String], polls: [CannedResponse] = [poll("COMPLETE", status: "SUCCEEDED")], output: Output) async throws -> Int32 {
-            CannedAPI.reset(Self.table(polls: polls))
+        private func run(
+            _ command: String, _ arguments: [String], polls: [CannedResponse] = [poll("COMPLETE", status: "SUCCEEDED")],
+            extra: [String: [CannedResponse]] = [:], output: Output
+        ) async throws -> Int32 {
+            CannedAPI.reset(Self.table(polls: polls).merging(extra) { _, new in new })
             return await BuildCommand.run(
                 command, arguments: arguments + ["--root", try Self.root()], client: try CannedAPI.client(),
                 pollEvery: .milliseconds(1), contactLimit: .milliseconds(200),
@@ -152,10 +155,63 @@ extension CannedAPISuites {
 
         @Test func lostContactExitsTwo() async throws {
             let output = Output()
-            let code = try await run("build", ["run-12", "--wait"], polls: [.status(500)], output: output)
+            let code = try await run("build", ["12", "--wait"], polls: [.status(500)], output: output)
             #expect(code == 2)
             #expect(output.err.last?.hasPrefix("Lost contact with App Store Connect for ") == true)
+            #expect(output.err.last?.hasSuffix("; build #12 may still be running. Id: run-12") == true)
+        }
+
+        @Test func lostContactAfterRunShowsTheStartedNumber() async throws {
+            let output = Output()
+            let code = try await run("run", ["Nightly tests", "--branch", "main", "--wait"], polls: [.status(500)], output: output)
+            #expect(code == 2)
+            #expect(output.err.last?.hasSuffix("; build #12 may still be running. Id: run-12") == true)
+        }
+
+        @Test func lostContactOnAnIDShowsTheID() async throws {
+            let output = Output()
+            let code = try await run("build", ["run-12", "--wait"], polls: [.status(500)], output: output)
+            #expect(code == 2)
             #expect(output.err.last?.hasSuffix("; build #run-12 may still be running. Id: run-12") == true)
+        }
+
+        @Test func aFailingSummaryKeepsTheStatusExit() async throws {
+            let output = Output()
+            let code = try await run("build", ["#12", "--wait"], polls: [Self.poll("COMPLETE", status: "FAILED"), .status(404)], output: output)
+            #expect(code == 1)
+            #expect(output.out.isEmpty)
+            #expect(output.err.last?.hasPrefix("Couldn't fetch the summary: ") == true)
+        }
+
+        @Test func aTimeoutAboveAWeekIsAUsageError() async throws {
+            for timeout in ["10081", "1e40"] {
+                let output = Output()
+                #expect(try await run("build", ["12", "--wait", "--timeout", timeout], output: output) == 64)
+                #expect(output.err.first == "--timeout takes at most 10080 minutes (one week), not \"\(timeout)\".")
+                #expect(CannedAPI.requests.isEmpty)
+            }
+        }
+
+        @Test func runOnABranchThatIsNotPushedExitsTwo() async throws {
+            let output = Output()
+            let code = try await run("run", ["Nightly tests", "--branch", "nope"], output: output)
+            #expect(code == 2)
+            #expect(output.err.first == "run failed: No branch or tag named \"nope\" in the repository. Is it pushed?")
+            #expect(!CannedAPI.requests.contains { $0.method == "POST" })
+        }
+
+        @Test func logsPrintsEachSelectedAction() async throws {
+            let output = Output()
+            let code = try await run("logs", ["12"], extra: [
+                "GET /v1/ciBuildRuns/run-12/actions": [.json(["data": [
+                    ["type": "ciBuildActions", "id": "act-1", "attributes": ["name": "Test - iOS", "completionStatus": "FAILED"]],
+                    ["type": "ciBuildActions", "id": "act-2", "attributes": ["name": "Archive", "completionStatus": "SUCCEEDED"]]
+                ]])],
+                "GET /v1/ciBuildActions/act-1/artifacts": [.json(["data": []])]
+            ], output: output)
+            #expect(code == 0)
+            #expect(output.out == ["## Test - iOS\nNo log bundle (the action may have been skipped)."])
+            #expect(output.err.isEmpty)
         }
 
         @Test func buildsListsTheScopedBuilds() async throws {
@@ -169,7 +225,8 @@ extension CannedAPISuites {
             let output = Output()
             let code = try await run("run", ["Nope", "--branch", "main"], output: output)
             #expect(code == 2)
-            #expect(output.err.first?.hasPrefix("run failed: No workflow matches") == true)
+            #expect(output.err.first == "run failed: No workflow matches \"Nope\". The workflows are the files in XcodeCloud/<bundle id>/.")
+            #expect(output.err.first?.contains("list_workflows") == false)
         }
     }
 }

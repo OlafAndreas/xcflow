@@ -144,7 +144,7 @@ extension Builds {
         try await start(client, workflow: reference, reference: branch, clean: clean).text
     }
 
-    func start(_ client: AppStoreConnectClient, workflow reference: String, reference branch: String, clean: Bool?) async throws -> (text: String, runID: String) {
+    func start(_ client: AppStoreConnectClient, workflow reference: String, reference branch: String, clean: Bool?) async throws -> (text: String, runID: String, number: String?) {
         let workflow = try await workflow(client, reference)
         let detail = try await client.get("/v1/ciWorkflows/\(workflow.id)", query: ["include": "repository", "fields[ciWorkflows]": "name,repository"])
         guard let repositoryID = (detail["data"] as? JSON)?.relationshipID("repository") else {
@@ -175,6 +175,7 @@ extension Builds {
             ] as JSON
         ])
         let run = response["data"] as? JSON ?? [:]
-        return ("Started build #\(run.attributes["number"] ?? "?") of \(workflow.name) (\(workflow.product.label)) on \(branch). Id: \(run.id)", run.id)
+        let number = run.attributes["number"].map { "\($0)" }
+        return ("Started build #\(number ?? "?") of \(workflow.name) (\(workflow.product.label)) on \(branch). Id: \(run.id)", run.id, number)
     }
 }

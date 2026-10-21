@@ -9,6 +9,8 @@ typealias ProductScope = @Sendable (AppStoreConnectClient) async throws -> [Prod
 /// Build lookups and actions, shared by the MCP tools and the CLI.
 struct Builds: Sendable {
     let scope: ProductScope
+    /// Ends the "No workflow matches" error: the MCP server points at list_workflows, the CLI at the workflow files.
+    var workflowHint = "Use list_workflows to see the names."
 }
 
 extension XcodeCloudTools {
@@ -30,14 +32,15 @@ extension Builds {
     /// Polls GET /v1/ciBuildRuns/<id> until the run is COMPLETE and returns its completionStatus.
     /// Calls `progress` once per change of executionProgress and once for the finished line.
     /// Failed polls are ridden out until they have lasted `contactLimit` without a success.
+    /// `number`, when known, names the build in the lines and errors until a poll returns it.
     func wait(
-        _ client: AppStoreConnectClient, runID: String, every: Duration, timeout: Duration, contactLimit: Duration,
+        _ client: AppStoreConnectClient, runID: String, number initialNumber: String? = nil, every: Duration, timeout: Duration, contactLimit: Duration,
         progress: @Sendable (String) -> Void
     ) async throws -> String {
         let clock = ContinuousClock()
         let start = clock.now
         var lastContact = start
-        var number = runID
+        var number = initialNumber ?? runID
         var reported: String?
         while true {
             do {

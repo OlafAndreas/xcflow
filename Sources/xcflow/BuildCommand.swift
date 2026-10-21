@@ -23,6 +23,9 @@ enum BuildCommand {
         "run": ["--clean", "--wait"]
     ]
 
+    /// One week; larger values would overflow Duration.
+    private static let maxTimeoutMinutes = 10080.0
+
     private struct UsageError: Error {
         let reason: String
     }
@@ -37,7 +40,9 @@ enum BuildCommand {
         _ command: String, arguments: [String],
         client: AppStoreConnectClient? = nil,
         pollEvery: Duration = .seconds(30), contactLimit: Duration = .seconds(600),
-        out: @Sendable (String) -> Void = { print($0) },
+        // fflush(nil) flushes every output stream: stdout is fully buffered when redirected, and naming
+        // the stdout global is a concurrency error under Swift 6 on Linux.
+        out: @Sendable (String) -> Void = { print($0); fflush(nil) },
         err: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
     ) async -> Int32 {
         let options: Options
@@ -54,13 +59,20 @@ enum BuildCommand {
 
         let rootPath = options.values["--root"] ?? "XcodeCloud"
         let root = URL(filePath: rootPath, directoryHint: .isDirectory, relativeTo: URL.currentDirectory()).standardizedFileURL
-        let builds = Builds(scope: BuildScope.resolve(root: root, product: options.values["--product"], all: options.switches.contains("--all")))
+        let builds = Builds(
+            scope: BuildScope.resolve(root: root, product: options.values["--product"], all: options.switches.contains("--all")),
+            workflowHint: "The workflows are the files in \(root.lastPathComponent)/<bundle id>/."
+        )
         let timeoutMinutes = options.values["--timeout"].flatMap(Double.init) ?? 120
         let wait = options.switches.contains("--wait")
 
-        func waitAndSummarize(_ client: AppStoreConnectClient, runID: String) async throws -> Int32 {
-            let status = try await builds.wait(client, runID: runID, every: pollEvery, timeout: .seconds(timeoutMinutes * 60), contactLimit: contactLimit, progress: err)
-            out(try await builds.getBuild(client, build: runID))
+        func waitAndSummarize(_ client: AppStoreConnectClient, runID: String, number: String?) async throws -> Int32 {
+            let status = try await builds.wait(client, runID: runID, number: number, every: pollEvery, timeout: .seconds(timeoutMinutes * 60), contactLimit: contactLimit, progress: err)
+            do {
+                out(try await builds.getBuild(client, build: runID))
+            } catch {
+                err("Couldn't fetch the summary: \(error.localizedDescription)")
+            }
             return status == "SUCCEEDED" ? 0 : 1
         }
 
@@ -77,7 +89,8 @@ enum BuildCommand {
                     out(try await builds.getBuild(client, build: reference))
                     return 0
                 }
-                return try await waitAndSummarize(client, runID: try await builds.buildRunID(client, reference))
+                let number = Int(reference.trimmingCharacters(in: CharacterSet(charactersIn: "# "))).map(String.init)
+                return try await waitAndSummarize(client, runID: try await builds.buildRunID(client, reference), number: number)
             case "logs":
                 out(try await builds.getBuildLogs(client, build: options.positionals[0], action: options.values["--action"]))
                 return 0
@@ -86,7 +99,7 @@ enum BuildCommand {
                 let clean: Bool? = options.switches.contains("--clean") ? true : nil
                 let started = try await builds.start(client, workflow: options.positionals[0], reference: reference, clean: clean)
                 out(started.text)
-                return wait ? try await waitAndSummarize(client, runID: started.runID) : 0
+                return wait ? try await waitAndSummarize(client, runID: started.runID, number: started.number) : 0
             }
         } catch let error as WaitError {
             switch error {
@@ -149,6 +162,9 @@ enum BuildCommand {
         }
         if let timeout = options.values["--timeout"], !(Double(timeout).map { $0 > 0 && $0.isFinite } ?? false) {
             throw UsageError(reason: "--timeout takes a number of minutes above zero, not \"\(timeout)\".")
+        }
+        if let timeout = options.values["--timeout"], let minutes = Double(timeout), minutes > maxTimeoutMinutes {
+            throw UsageError(reason: "--timeout takes at most \(Int(maxTimeoutMinutes)) minutes (one week), not \"\(timeout)\".")
         }
 
         switch command {

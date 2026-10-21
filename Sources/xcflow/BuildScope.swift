@@ -17,13 +17,13 @@ enum BuildScope {
             }
             let folders = folders(in: root)
             guard !folders.isEmpty else {
-                throw ToolError.refused("No products in XcodeCloud/. Run from the repo root, or pass --product <bundle id> or --all.")
+                throw ToolError.refused("No products in \(root.lastPathComponent)/. Run from the repo root, or pass --product <bundle id> or --all.")
             }
             var scoped: [Product] = []
             for folder in folders {
                 let matches = products.filter { $0.bundleID == folder }
                 guard !matches.isEmpty else {
-                    throw ToolError.refused("XcodeCloud/\(folder) matches no product this key can see. Check the bundle id and the key's team, or pass --product or --all.")
+                    throw ToolError.refused("\(root.lastPathComponent)/\(folder) matches no product this key can see. Check the bundle id and the key's team, or pass --product or --all.")
                 }
                 scoped += matches
             }

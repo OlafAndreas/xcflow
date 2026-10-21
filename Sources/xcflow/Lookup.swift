@@ -62,7 +62,7 @@ extension Builds {
         let all = try await workflows(client, in: try await products(client))
         let matches = all.filter { $0.id == reference || $0.name.caseInsensitiveCompare(reference) == .orderedSame }
         guard let match = matches.first else {
-            throw ToolError.notFound("No workflow matches \"\(reference)\". Use list_workflows to see the names.")
+            throw ToolError.notFound("No workflow matches \"\(reference)\". \(workflowHint)")
         }
         guard matches.count == 1 else {
             let candidates = matches.map { "\($0.product.label): \($0.id)" }.joined(separator: "\n")
