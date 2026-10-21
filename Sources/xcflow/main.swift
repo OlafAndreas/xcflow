@@ -36,6 +36,8 @@ case "get" where arguments.count >= 2:
     }
 case "export", "plan", "apply":
     exit(await SyncCommand.run(arguments[0], arguments: Array(arguments.dropFirst())))
+case "builds", "build", "logs", "run":
+    exit(await BuildCommand.run(arguments[0], arguments: Array(arguments.dropFirst())))
 default:
     FileHandle.standardError.write(Data(Usage.text.utf8))
     exit(arguments.first == "help" || arguments.first == "--help" ? 0 : 64)
