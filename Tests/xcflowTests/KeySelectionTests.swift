@@ -24,7 +24,7 @@ import Testing
 
     @Test func pinnedKeyNotStoredSaysSo() {
         let text = message { try KeySelection.choose(environment: [:], pinned: "GONE1", stored: [team]) }
-        #expect(text == "This repo uses key GONE1 (XcodeCloud/xcflow.json), which isn't stored on this machine. Store it with: xcflow auth --key-id GONE1 --issuer-id <issuer> --p8 <path>.")
+        #expect(text == "This repo uses key GONE1, which isn't stored on this machine. Store it with: xcflow auth --key-id GONE1 --issuer-id <issuer> --p8 <path>, or pick a stored key with: xcflow keys use <key id>.")
     }
 
     @Test func onlyStoredKeyIsUsedWithoutPin() throws {
@@ -42,76 +42,141 @@ import Testing
         #expect(text == CredentialError.missing.localizedDescription)
     }
 
-    // MARK: location
+    // MARK: the repo
 
     private let cwd = URL(filePath: "/work/here", directoryHint: .isDirectory)
 
-    @Test func rootOptionPutsTheFileInTheRoot() {
-        let url = RepoKeyFile.url(root: URL(filePath: "/r/XcodeCloud", directoryHint: .isDirectory), environment: ["XCFLOW_REPO_ROOT": "/x"], gitRoot: { nil }, currentDirectory: cwd)
-        #expect(url.path == "/r/XcodeCloud/xcflow.json")
+    /// git answering from a table of (directory, first argument) → output, and recording where it ran.
+    private func git(_ answers: [String: String]) -> KeyPins.Git {
+        { directory, arguments in answers["\(directory.path(percentEncoded: false))|\(arguments[0])"] }
     }
 
-    @Test func repoRootEnvironmentComesBeforeGit() {
-        let url = RepoKeyFile.url(root: nil, environment: ["XCFLOW_REPO_ROOT": "/x"], gitRoot: { URL(filePath: "/git") }, currentDirectory: cwd)
-        #expect(url.path == "/x/XcodeCloud/xcflow.json")
+    @Test func theOriginRemoteNamesTheRepo() {
+        let pins = KeyPins.here(root: nil, environment: [:], currentDirectory: cwd, git: git([
+            "/work/here/|rev-parse": "/work",
+            "/work/here/|remote": "git@github.com:Team/App.git"
+        ]))
+        #expect(pins.repo == "github.com/team/app")
+        #expect(pins.legacyFile.path == "/work/XcodeCloud/xcflow.json")
     }
 
-    @Test func gitRootComesBeforeTheWorkingDirectory() {
-        let url = RepoKeyFile.url(root: nil, environment: [:], gitRoot: { URL(filePath: "/git", directoryHint: .isDirectory) }, currentDirectory: cwd)
-        #expect(url.path == "/git/XcodeCloud/xcflow.json")
+    @Test func withoutARemoteTheGitRootNamesTheRepo() {
+        let pins = KeyPins.here(root: nil, environment: [:], currentDirectory: cwd, git: git(["/work/here/|rev-parse": "/work"]))
+        #expect(pins.repo == "/work")
     }
 
-    @Test func workingDirectoryIsTheLastResort() {
-        let url = RepoKeyFile.url(root: nil, environment: [:], gitRoot: { nil }, currentDirectory: cwd)
-        #expect(url.path == "/work/here/XcodeCloud/xcflow.json")
+    @Test func outsideGitTheFolderNamesTheRepo() {
+        let pins = KeyPins.here(root: nil, environment: [:], currentDirectory: cwd, git: git([:]))
+        #expect(pins.repo == "/work/here")
+        #expect(pins.legacyFile.path == "/work/here/XcodeCloud/xcflow.json")
     }
 
-    // MARK: file
-
-    private func tempFile() -> URL {
-        FileManager.default.temporaryDirectory
-            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
-            .appending(path: "XcodeCloud/xcflow.json")
+    @Test func repoRootEnvironmentComesBeforeTheWorkingDirectory() {
+        let pins = KeyPins.here(root: nil, environment: ["XCFLOW_REPO_ROOT": "/x"], currentDirectory: cwd, git: git(["/x/|remote": "https://github.com/team/x"]))
+        #expect(pins.repo == "github.com/team/x")
+        #expect(pins.legacyFile.path == "/x/XcodeCloud/xcflow.json")
     }
 
-    @Test func absentFileReadsAsNil() throws {
-        #expect(try RepoKeyFile.read(tempFile()) == nil)
+    @Test func theRootOptionAsksGitInItsParent() {
+        let root = URL(filePath: "/r/XcodeCloud", directoryHint: .isDirectory)
+        let pins = KeyPins.here(root: root, environment: ["XCFLOW_REPO_ROOT": "/x"], currentDirectory: cwd, git: git(["/r/|remote": "ssh://git@host.example:22/team/r.git"]))
+        #expect(pins.repo == "host.example:22/team/r")
+        #expect(pins.legacyFile.path == "/r/XcodeCloud/xcflow.json")
     }
 
-    @Test func writeCreatesFolderAndReadsBack() throws {
-        let url = tempFile()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
-        try RepoKeyFile.write("ABC123", to: url)
-        #expect(try RepoKeyFile.read(url) == "ABC123")
-        let text = try String(contentsOf: url, encoding: .utf8)
-        #expect(text == "{\n  \"keyID\" : \"ABC123\"\n}\n")
+    @Test func remotesOfOneRepoAgree() {
+        let remotes = [
+            "git@github.com:Team/App.git",
+            "https://github.com/team/app.git",
+            "https://user:token@github.com/Team/App/",
+            "ssh://git@github.com/team/app"
+        ]
+        #expect(Set(remotes.map(KeyPins.normalizedRemote)) == ["github.com/team/app"])
     }
 
-    @Test func malformedFileSaysSo() throws {
-        let url = tempFile()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try "nope".write(to: url, atomically: true, encoding: .utf8)
-        let text = message { try RepoKeyFile.read(url) as Any }
+    // MARK: the store
+
+    private func tempPins(repo: String = "github.com/team/app") -> KeyPins {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        return KeyPins(store: folder.appending(path: "repos.json"), repo: repo, legacyFile: folder.appending(path: "repo/XcodeCloud/xcflow.json"))
+    }
+
+    @Test func noStoreReadsAsNoPin() throws {
+        #expect(try tempPins().pinned() == nil)
+    }
+
+    @Test func pinsAreKeptPerRepo() throws {
+        let app = tempPins()
+        let other = KeyPins(store: app.store, repo: "github.com/team/other", legacyFile: app.legacyFile)
+        try app.pin("ABC123")
+        try other.pin("XYZ789")
+        try app.pin("DEF456")
+        #expect(try app.pinned() == "DEF456")
+        #expect(try other.pinned() == "XYZ789")
+        let text = try String(contentsOf: app.store, encoding: .utf8)
+        #expect(text == "{\n  \"github.com/team/app\" : \"DEF456\",\n  \"github.com/team/other\" : \"XYZ789\"\n}\n")
+    }
+
+    @Test func aMalformedStoreSaysSo() throws {
+        let pins = tempPins()
+        try FileManager.default.createDirectory(at: pins.store.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "nope".write(to: pins.store, atomically: true, encoding: .utf8)
+        let text = message { try pins.pinned() as Any }
+        #expect(text == "\(pins.store.path(percentEncoded: false)) isn't valid: expected {\"<repo>\": \"<key id>\"}.")
+    }
+
+    // MARK: the legacy file
+
+    @Test func aLegacyFileIsReadWhenTheStoreHasNoPin() throws {
+        let pins = tempPins()
+        try pins.writeLegacy("OLD1")
+        #expect(try pins.pinned() == "OLD1")
+        try pins.pin("NEW1")
+        #expect(try pins.pinned() == "NEW1")
+    }
+
+    @Test func aMalformedLegacyFileSaysSo() throws {
+        let pins = tempPins()
+        try pins.writeLegacy("x")
+        try "nope".write(to: pins.legacyFile, atomically: true, encoding: .utf8)
+        let text = message { try pins.pinned() as Any }
         #expect(text == "XcodeCloud/xcflow.json isn't valid: expected {\"keyID\": \"…\"}.")
+    }
+
+    @Test func movingALegacyPinStoresItAndDeletesTheFile() throws {
+        let pins = tempPins()
+        #expect(try pins.moveLegacyPin() == nil)
+        try pins.writeLegacy("OLD1")
+        #expect(try pins.moveLegacyPin(dryRun: true) != nil)
+        #expect(FileManager.default.fileExists(atPath: pins.legacyFile.path(percentEncoded: false)))
+        #expect(try pins.moveLegacyPin() == "Removed XcodeCloud/xcflow.json; this repo's key (OLD1) is now pinned on this machine instead of in the repo.")
+        #expect(!FileManager.default.fileExists(atPath: pins.legacyFile.path(percentEncoded: false)))
+        #expect(try pins.pinned() == "OLD1")
+    }
+
+    @Test func movingALegacyPinKeepsTheStoresPin() throws {
+        let pins = tempPins()
+        try pins.pin("NEW1")
+        try pins.writeLegacy("OLD1")
+        _ = try pins.moveLegacyPin()
+        #expect(try pins.pinned() == "NEW1")
     }
 
     // MARK: loadKey
 
     @Test func loadKeyUsesThePinnedKey() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try RepoKeyFile.write("SOLO1", to: root.appending(path: "xcflow.json"))
+        let pins = tempPins()
+        try pins.pin("SOLO1")
         let keys = FakeKeys(
             Credentials(keyID: "TEAM1", privateKeyPEM: "t", issuerID: "i"),
             Credentials(keyID: "SOLO1", privateKeyPEM: "s", issuerID: nil)
         )
-        let credentials = try loadKey(root: root, keys: keys, environment: [:])
+        let credentials = try loadKey(root: nil, keys: keys, environment: [:], pins: pins)
         #expect(credentials.keyID == "SOLO1")
     }
 
     @Test func loadKeyPrefersTheEnvironment() throws {
-        let credentials = try loadKey(root: nil, keys: FakeKeys(), environment: ["ASC_KEY_ID": "E", "ASC_KEY_CONTENT": pem])
+        let credentials = try loadKey(root: nil, keys: FakeKeys(), environment: ["ASC_KEY_ID": "E", "ASC_KEY_CONTENT": pem], pins: tempPins())
         #expect(credentials.keyID == "E")
     }
 }
