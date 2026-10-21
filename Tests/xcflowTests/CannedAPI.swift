@@ -12,7 +12,11 @@ import os
 #else
 import Synchronization
 #endif
+import Testing
 @testable import xcflow
+
+/// Parent of every suite that uses CannedAPI: its state is process-global, so they must not run concurrently.
+@Suite(.serialized) struct CannedAPISuites {}
 
 struct CannedResponse: Sendable {
     let status: Int
