@@ -128,7 +128,7 @@ Run with no command, xcflow is an MCP server. `setup` registers it in `.mcp.json
 
 - **Builds:** `list_workflows`, `list_builds`, `get_build` (action results, compiler errors, failing tests), `get_build_logs`, `start_build`.
 - **Workflows:** `get_workflow` shows the live configuration and the file that defines it, and `list_environments` lists the Xcode and macOS versions. The MCP server never changes workflows; that goes through the files.
-- **Apps:** the first time a tool runs, you choose which apps it shows. `choose_apps` changes the choice.
+- **Apps:** the tools show the apps in the repo's `XcodeCloud/` folders. In a repo without them, the first tool call asks which apps to show. `choose_apps` changes the choice for the current repo. Choices are kept per repo on this machine, in `~/Library/Application Support/xcflow/apps.json`, so a repo for one team never hides another team's apps.
 
 ## Roadmap
 

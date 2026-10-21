@@ -35,46 +35,27 @@ enum KeySelection {
 struct KeyPins {
     /// The JSON object mapping each repo to its key id.
     let store: URL
-    /// The repo: its origin remote without scheme, user or `.git`, else its root's path.
+    /// The repo's `RepoIdentity.id`.
     let repo: String
     /// `XcodeCloud/xcflow.json`, where xcflow 0.2.12 kept the pin inside the repo. Read when the store has none.
     let legacyFile: URL
 
-    typealias Git = (_ directory: URL, _ arguments: [String]) -> String?
-
     static let defaultStore = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "xcflow/repos.json")
 
-    /// The repo of `--root`'s parent folder, else `XCFLOW_REPO_ROOT`, else the working directory.
+    /// The pins of the repo `RepoIdentity.here` finds.
     static func here(
         root: URL?,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         currentDirectory: URL = URL.currentDirectory(),
-        git: Git = runGit,
+        git: RepoIdentity.Git = RepoIdentity.runGit,
         store: URL = defaultStore
     ) -> KeyPins {
-        let directory = root?.deletingLastPathComponent()
-            ?? environment["XCFLOW_REPO_ROOT"].map { URL(filePath: $0, directoryHint: .isDirectory) }
-            ?? currentDirectory
-        let top = git(directory, ["rev-parse", "--show-toplevel"]).map { URL(filePath: $0, directoryHint: .isDirectory) } ?? directory
-        let remote = git(directory, ["remote", "get-url", "origin"]).map(normalizedRemote)
+        let repo = RepoIdentity.here(root: root, environment: environment, currentDirectory: currentDirectory, git: git)
         return KeyPins(
             store: store,
-            repo: remote ?? top.standardizedFileURL.path(percentEncoded: false).replacing(/\/$/, with: ""),
-            legacyFile: root?.appending(path: "xcflow.json") ?? top.appending(path: "XcodeCloud/xcflow.json")
+            repo: repo.id,
+            legacyFile: root?.appending(path: "xcflow.json") ?? repo.root.appending(path: "XcodeCloud/xcflow.json")
         )
-    }
-
-    /// `git@github.com:Owner/Repo.git` and `https://user@github.com/Owner/Repo` both become `github.com/owner/repo`, so every clone and worktree of a repo shares its pin.
-    static func normalizedRemote(_ remote: String) -> String {
-        var text = remote.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasScheme = text.contains("://")
-        text = text.replacing(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, with: "")
-        text = text.replacing(/^[^@\/]+@/, with: "")
-        if !hasScheme {
-            text = text.replacing(/^([^\/:]+):/, with: { "\($0.1)/" })
-        }
-        text = text.replacing(/\/+$/, with: "").replacing(/\.git$/, with: "")
-        return text.lowercased()
     }
 
     /// The pinned key id: the store's, else the repo's legacy file's.
@@ -128,27 +109,6 @@ struct KeyPins {
             throw CredentialError.environment("XcodeCloud/xcflow.json isn't valid: expected {\"keyID\": \"…\"}.")
         }
         return contents.keyID
-    }
-
-    /// git's trimmed output in `directory`, or nil when it fails or prints nothing.
-    static func runGit(in directory: URL, _ arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/env")
-        process.arguments = ["git"] + arguments
-        process.currentDirectoryURL = directory
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
     }
 }
 

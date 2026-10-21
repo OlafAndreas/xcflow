@@ -15,7 +15,7 @@ private enum Schema {
 struct ChooseAppsTool: MCPTool {
     static let definition = Tool(
         name: "choose_apps",
-        description: "Choose which apps the Xcode Cloud tools show; the others are hidden from every tool. Without `apps`, the user picks them in a form. The choice is saved per user.",
+        description: "Choose which apps the Xcode Cloud tools show; the others are hidden from every tool. Without `apps`, the user picks them in a form. The choice is saved per repo on this machine; without one, the tools show the apps in the repo's XcodeCloud/ folders.",
         inputSchema: [
             "type": "object",
             "properties": [
