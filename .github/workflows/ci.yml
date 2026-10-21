@@ -43,6 +43,8 @@ jobs:
         run: |
           swift --version
           swift test
+          echo "Spike: prebuilts:"; find .build/prebuilts -maxdepth 3 2>/dev/null || echo "Spike: no prebuilts directory"
+          grep -A3 '"swift-syntax"' Package.resolved
 
       - name: Build the release binary
         run: |
