@@ -2,7 +2,7 @@ import Foundation
 
 extension XcodeCloudTools {
     func getWorkflow(_ client: AppStoreConnectClient, workflow reference: String) async throws -> String {
-        let workflow = try await workflow(client, reference)
+        let workflow = try await builds.workflow(client, reference)
         let response = try await client.get("/v1/ciWorkflows/\(workflow.id)", query: ["include": "xcodeVersion,macOsVersion,repository"])
         let data = response["data"] as? JSON ?? [:]
         let included = response["included"] as? [JSON] ?? []

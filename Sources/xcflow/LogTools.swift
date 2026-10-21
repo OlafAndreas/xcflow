@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-extension XcodeCloudTools {
+extension Builds {
     private static let maxLinesPerAction = 60
     static let repositoryRoot = "/Volumes/workspace/repository/"
 

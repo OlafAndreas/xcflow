@@ -14,20 +14,6 @@ struct Workflow {
 }
 
 extension XcodeCloudTools {
-    func products(_ client: AppStoreConnectClient, matching filter: String? = nil) async throws -> [Product] {
-        let all = try await client.products()
-        let chosen = try await apps.chosenApps(from: Self.appNames(of: all))
-        let products = all.filter { chosen.contains($0.name) }
-        guard let filter else {
-            return products
-        }
-        let matches = products.filter { $0.bundleID == filter || $0.name.caseInsensitiveCompare(filter) == .orderedSame || $0.id == filter }
-        guard !matches.isEmpty else {
-            throw ToolError.notFound("No product matches \"\(filter)\". Products: \(products.map(\.label).joined(separator: ", ")). Apps left out with choose_apps are hidden.")
-        }
-        return matches
-    }
-
     static func appNames(of products: [Product]) -> [String] {
         Set(products.map(\.name)).sorted()
     }
@@ -48,6 +34,20 @@ extension XcodeCloudTools {
         let hidden = available.filter { !chosen.contains($0) }
         return "Showing: \(chosen.sorted().joined(separator: ", "))" + (hidden.isEmpty ? "" : "\nHidden: \(hidden.joined(separator: ", "))")
     }
+}
+
+extension Builds {
+    func products(_ client: AppStoreConnectClient, matching filter: String? = nil) async throws -> [Product] {
+        let products = try await scope(client)
+        guard let filter else {
+            return products
+        }
+        let matches = products.filter { $0.bundleID == filter || $0.name.caseInsensitiveCompare(filter) == .orderedSame || $0.id == filter }
+        guard !matches.isEmpty else {
+            throw ToolError.notFound("No product matches \"\(filter)\". Products: \(products.map(\.label).joined(separator: ", ")). Apps left out with choose_apps are hidden.")
+        }
+        return matches
+    }
 
     func workflows(_ client: AppStoreConnectClient, in products: [Product]) async throws -> [Workflow] {
         var workflows: [Workflow] = []
@@ -62,7 +62,7 @@ extension XcodeCloudTools {
         let all = try await workflows(client, in: try await products(client))
         let matches = all.filter { $0.id == reference || $0.name.caseInsensitiveCompare(reference) == .orderedSame }
         guard let match = matches.first else {
-            throw ToolError.notFound("No workflow matches \"\(reference)\". Use list_workflows to see the names.")
+            throw ToolError.notFound("No workflow matches \"\(reference)\". \(workflowHint)")
         }
         guard matches.count == 1 else {
             let candidates = matches.map { "\($0.product.label): \($0.id)" }.joined(separator: "\n")

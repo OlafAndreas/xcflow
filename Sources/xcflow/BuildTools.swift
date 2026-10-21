@@ -2,8 +2,8 @@ import Foundation
 
 extension XcodeCloudTools {
     func listWorkflows(_ client: AppStoreConnectClient, product: String?) async throws -> String {
-        let products = try await products(client, matching: product)
-        let workflows = try await workflows(client, in: products)
+        let products = try await builds.products(client, matching: product)
+        let workflows = try await builds.workflows(client, in: products)
         return products.map { product in
             let lines = workflows.filter { $0.product.id == product.id }.map { workflow in
                 let state = workflow.json.attributes["isEnabled"] as? Bool == false ? " [disabled]" : ""
@@ -12,7 +12,9 @@ extension XcodeCloudTools {
             return ([product.label] + (lines.isEmpty ? ["  (no workflows)"] : lines)).joined(separator: "\n")
         }.joined(separator: "\n\n")
     }
+}
 
+extension Builds {
     func listBuilds(_ client: AppStoreConnectClient, workflow reference: String?, branch: String?, limit: Int) async throws -> String {
         let paths: [String]
         if let reference {
@@ -139,6 +141,10 @@ extension XcodeCloudTools {
     }
 
     func startBuild(_ client: AppStoreConnectClient, workflow reference: String, branch: String, clean: Bool?) async throws -> String {
+        try await start(client, workflow: reference, reference: branch, clean: clean).text
+    }
+
+    func start(_ client: AppStoreConnectClient, workflow reference: String, reference branch: String, clean: Bool?) async throws -> (text: String, runID: String, number: String?) {
         let workflow = try await workflow(client, reference)
         let detail = try await client.get("/v1/ciWorkflows/\(workflow.id)", query: ["include": "repository", "fields[ciWorkflows]": "name,repository"])
         guard let repositoryID = (detail["data"] as? JSON)?.relationshipID("repository") else {
@@ -169,6 +175,7 @@ extension XcodeCloudTools {
             ] as JSON
         ])
         let run = response["data"] as? JSON ?? [:]
-        return "Started build #\(run.attributes["number"] ?? "?") of \(workflow.name) (\(workflow.product.label)) on \(branch). Id: \(run.id)"
+        let number = run.attributes["number"].map { "\($0)" }
+        return ("Started build #\(number ?? "?") of \(workflow.name) (\(workflow.product.label)) on \(branch). Id: \(run.id)", run.id, number)
     }
 }

@@ -64,7 +64,7 @@ struct ListBuildsTool: MCPTool {
     )
 
     static func run(_ tools: XcodeCloudTools, _ client: AppStoreConnectClient, _ arguments: Arguments) async throws -> String {
-        try await tools.listBuilds(
+        try await tools.builds.listBuilds(
             client,
             workflow: arguments.string("workflow"),
             branch: arguments.string("branch"),
@@ -86,7 +86,7 @@ struct GetBuildTool: MCPTool {
     )
 
     static func run(_ tools: XcodeCloudTools, _ client: AppStoreConnectClient, _ arguments: Arguments) async throws -> String {
-        try await tools.getBuild(client, build: try arguments.required("build"))
+        try await tools.builds.getBuild(client, build: try arguments.required("build"))
     }
 }
 
@@ -106,7 +106,7 @@ struct GetBuildLogsTool: MCPTool {
     )
 
     static func run(_ tools: XcodeCloudTools, _ client: AppStoreConnectClient, _ arguments: Arguments) async throws -> String {
-        try await tools.getBuildLogs(client, build: try arguments.required("build"), action: arguments.string("action"))
+        try await tools.builds.getBuildLogs(client, build: try arguments.required("build"), action: arguments.string("action"))
     }
 }
 
@@ -127,7 +127,7 @@ struct StartBuildTool: MCPTool {
     )
 
     static func run(_ tools: XcodeCloudTools, _ client: AppStoreConnectClient, _ arguments: Arguments) async throws -> String {
-        try await tools.startBuild(
+        try await tools.builds.startBuild(
             client,
             workflow: try arguments.required("workflow"),
             branch: try arguments.required("branch"),

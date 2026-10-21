@@ -13,6 +13,15 @@ enum Usage {
       apply [--dry-run <folder>]        Make those changes. The GitHub Action runs this on the default branch.
       export [<bundle id> …]            Write the live workflows to XcodeCloud/. Without ids: the products already there,
                                         or the ones in the project's Xcode Cloud manifest.
+      builds [<workflow>] [--branch <name>] [--limit <n>] [--product <bundle id> | --all] [--root <folder>]
+                                        List recent builds, newest first.
+      build <number or id> [--wait] [--timeout <minutes>] [--product <bundle id> | --all] [--root <folder>]
+                                        Show a build: its actions, compiler errors and failing tests.
+      logs <number or id> [--action <name>] [--product <bundle id> | --all] [--root <folder>]
+                                        Download a build's logs and print where they went.
+      run <workflow> (--branch <name> | --tag <name>) [--clean] [--wait] [--timeout <minutes>] [--product <bundle id> | --all] [--root <folder>]
+                                        Start a build. With --wait, also wait for it to finish.
+                                        --wait exits 0 when the build succeeded, 1 when it failed, 2 when it couldn't finish, 124 on timeout.
       get <path> [key=value …]          Print a raw App Store Connect API response.
       --version                         Print the version.
 
