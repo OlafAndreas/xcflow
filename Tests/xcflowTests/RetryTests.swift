@@ -94,4 +94,14 @@ struct RetryTests {
         }
         #expect(calls == 1)
     }
+
+    @Test func aRejectedKeyTellsHowToStoreTheIssuer() async throws {
+        script([401])
+        do {
+            _ = try await client().get("/v1/ciProducts")
+            Issue.record("Expected the request to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("store it again with its issuer id: xcflow auth --key-id <id> --issuer-id <issuer> --p8 <path>."))
+        }
+    }
 }

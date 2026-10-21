@@ -154,7 +154,7 @@ struct AppStoreConnectError: LocalizedError {
 
     var errorDescription: String? {
         let hint = switch status {
-        case 401: " The key was rejected. Check the key id, or re-run setup."
+        case 401: " The key was rejected. Check the key id, or re-run setup. If it is a team key, store it again with its issuer id: xcflow auth --key-id <id> --issuer-id <issuer> --p8 <path>."
         case 403: " The key's role is not allowed to do this."
         default: ""
         }

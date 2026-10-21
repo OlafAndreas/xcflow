@@ -30,6 +30,24 @@ enum CredentialStore {
         return Credentials(keyID: keyID, privateKeyPEM: pem, issuerID: environment["ASC_ISSUER_ID"])
     }
 
+    private struct IssuerAttribute: Codable {
+        let issuerID: String
+    }
+
+    /// The Keychain item's generic attribute: JSON holding the issuer id of a team key. Nil for an individual key.
+    static func genericAttribute(issuerID: String?) -> Data? {
+        guard let issuerID, !issuerID.isEmpty else { return nil }
+        return try? JSONEncoder().encode(IssuerAttribute(issuerID: issuerID))
+    }
+
+    /// The issuer id in a generic attribute. Missing, empty or undecodable data reads as no issuer.
+    static func issuerID(fromGeneric data: Data?) -> String? {
+        guard let data, let attribute = try? JSONDecoder().decode(IssuerAttribute.self, from: data), !attribute.issuerID.isEmpty else {
+            return nil
+        }
+        return attribute.issuerID
+    }
+
     #if canImport(Security)
     static func save(_ credentials: Credentials) throws {
         let deleteQuery: [String: Any] = [
@@ -38,13 +56,16 @@ enum CredentialStore {
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
-        let addQuery: [String: Any] = [
+        var addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: credentials.keyID,
             kSecAttrLabel as String: "xcflow (App Store Connect API key)",
             kSecValueData as String: Data(credentials.privateKeyPEM.utf8)
         ]
+        if let generic = genericAttribute(issuerID: credentials.issuerID) {
+            addQuery[kSecAttrGeneric as String] = generic
+        }
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw CredentialError.keychain(status)
@@ -72,7 +93,7 @@ enum CredentialStore {
         else {
             throw CredentialError.keychain(status)
         }
-        return Credentials(keyID: keyID, privateKeyPEM: pem)
+        return Credentials(keyID: keyID, privateKeyPEM: pem, issuerID: issuerID(fromGeneric: item[kSecAttrGeneric as String] as? Data))
     }
     #else
     static func save(_ credentials: Credentials) throws {
