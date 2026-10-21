@@ -74,15 +74,16 @@ enum RepoSetup {
         interactive: Bool = isatty(STDIN_FILENO) == 1,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         connect: (Credentials) throws -> AppStoreConnectClient = { AppStoreConnectClient(tokens: try TokenProvider(credentials: $0)) },
-        input: @escaping () -> String? = { readLine() }
+        input: @escaping () -> String? = { readLine() },
+        pins: KeyPins? = nil
     ) async throws -> [String] {
         let options = try Options(arguments: arguments)
         let root = try options.repo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? gitRoot()
         let prompt = Prompt(yes: options.yes, dryRun: options.dryRun, interactive: interactive, input: input)
         var key = try options.hasWholeKey ? askForTeamKey(options, prompt: prompt) : nil
         let workflows = root.appending(path: "XcodeCloud")
-        let repoFile = workflows.appending(path: "xcflow.json")
-        let pinned = try RepoKeyFile.read(repoFile)
+        let pins = pins ?? KeyPins.here(root: workflows)
+        let pinned = try pins.pinned()
         let rootPath = root.standardizedFileURL.path(percentEncoded: false).replacing(/\/$/, with: "")
         print(options.dryRun ? "Dry run of xcflow setup in \(rootPath). Nothing is written or sent.\n" : "Setting up xcflow in \(rootPath).\n")
 
@@ -133,13 +134,20 @@ enum RepoSetup {
                 keptTagPins.append(file.path)
             }
         }
+        if let moved = try pins.moveLegacyPin(dryRun: options.dryRun) {
+            print(moved)
+        }
         if let keyToPin {
-            let status = try pinKey(keyToPin, at: repoFile, force: options.force, dryRun: options.dryRun)
-            if status == .keptDifferent, let pinned {
-                print("Kept \(RepoKeyFile.displayPath), which names key \(pinned)")
-                todo.append("`\(RepoKeyFile.displayPath)` names key \(pinned), but setup used \(keyToPin). Keep it, or switch with `xcflow keys use \(keyToPin)` (or `xcflow setup --force`).")
-            } else {
-                print(describe(RepoKeyFile.displayPath, status, dryRun: options.dryRun))
+            switch try pinKey(keyToPin, pins: pins, force: options.force, dryRun: options.dryRun) {
+            case .created:
+                print("\(options.dryRun ? "Would pin" : "Pinned") this repo to key \(keyToPin) on this machine")
+            case .unchanged:
+                print("This repo is pinned to key \(keyToPin) on this machine already")
+            case .overwritten:
+                print("\(options.dryRun ? "Would pin" : "Pinned") this repo to key \(keyToPin) on this machine, instead of \(pinned ?? "")")
+            case .keptDifferent:
+                print("Kept this repo's pin to key \(pinned ?? "") on this machine")
+                todo.append("This repo is pinned to key \(pinned ?? "") on this machine, but setup used \(keyToPin). Keep it, or switch with `xcflow keys use \(keyToPin)` (or `xcflow setup --force`).")
             }
         }
         if pin.commit == nil {
@@ -252,7 +260,7 @@ enum RepoSetup {
     private static func pickKey(among stored: [StoredKey], options: Options, keys: any KeyStore, prompt: Prompt) throws -> FoundKey? {
         let list = stored.map { "\($0.keyID) \($0.isTeamKey ? "team" : "individual")" }.joined(separator: ", ")
         if options.dryRun {
-            print("Would ask which of the stored keys (\(list)) this repo uses, or for a new one, and pin it in \(RepoKeyFile.displayPath).\n")
+            print("Would ask which of the stored keys (\(list)) this repo uses, or for a new one, and pin it on this machine.\n")
             return nil
         }
         guard prompt.interactive else { return nil }
@@ -271,9 +279,9 @@ enum RepoSetup {
         return try askForTeamKey(options, prompt: prompt).map(FoundKey.new)
     }
 
-    /// Writes the repo's key pin: created when there is none, unchanged when it names this key, kept when it names another unless `force`.
-    static func pinKey(_ keyID: String, at url: URL, force: Bool, dryRun: Bool) throws -> FileStatus {
-        let current = try RepoKeyFile.read(url)
+    /// Pins the repo to the key on this machine: created when there is no pin, unchanged when it names this key, kept when it names another unless `force`.
+    static func pinKey(_ keyID: String, pins: KeyPins, force: Bool, dryRun: Bool) throws -> FileStatus {
+        let current = try pins.pinned()
         if current == keyID {
             return .unchanged
         }
@@ -281,7 +289,7 @@ enum RepoSetup {
             return .keptDifferent
         }
         if !dryRun {
-            try RepoKeyFile.write(keyID, to: url)
+            try pins.pin(keyID)
         }
         return current == nil ? .created : .overwritten
     }

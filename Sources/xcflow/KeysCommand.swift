@@ -8,27 +8,25 @@ enum KeysCommand {
     static func run(
         arguments: [String],
         keys: any KeyStore = KeychainKeyStore(),
-        repoFile: URL? = nil,
+        pins: KeyPins? = nil,
         out: @Sendable (String) -> Void = { print($0) },
         err: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
     ) -> Int32 {
-        let file = repoFile ?? RepoKeyFile.url(
-            root: nil,
-            environment: ProcessInfo.processInfo.environment,
-            gitRoot: RepoKeyFile.gitRoot,
-            currentDirectory: URL.currentDirectory()
-        )
+        let pins = pins ?? KeyPins.here(root: nil)
         do {
             switch arguments {
             case [], ["list"]:
-                try list(keys: keys, file: file, out: out)
+                try list(keys: keys, pins: pins, out: out)
             case let command where command.count == 2 && command[0] == "use":
                 guard try isStored(command[1], in: keys) else {
                     err("Key \(command[1]) isn't stored on this machine. Store it with: xcflow auth --key-id \(command[1]) --issuer-id <issuer> --p8 <path>.")
                     return 2
                 }
-                try RepoKeyFile.write(command[1], to: file)
-                out("Pinned this repo to key \(command[1]) in \(RepoKeyFile.displayPath).")
+                if let moved = try pins.moveLegacyPin() {
+                    out(moved)
+                }
+                try pins.pin(command[1])
+                out("Pinned this repo to key \(command[1]) on this machine.")
             case let command where command.count == 2 && command[0] == "remove":
                 guard try isStored(command[1], in: keys) else {
                     err("Key \(command[1]) isn't stored on this machine.")
@@ -36,8 +34,8 @@ enum KeysCommand {
                 }
                 try keys.remove(keyID: command[1])
                 out("Removed key \(command[1]) from the Keychain.")
-                if (try? RepoKeyFile.read(file)) == command[1] {
-                    out("This repo still names it in \(RepoKeyFile.displayPath). Pick another with: xcflow keys use <key id>.")
+                if (try? pins.pinned()) == command[1] {
+                    out("This repo is still pinned to it. Pick another with: xcflow keys use <key id>.")
                 }
             default:
                 err(usage)
@@ -54,8 +52,8 @@ enum KeysCommand {
         try keys.keys().contains { $0.keyID == keyID }
     }
 
-    private static func list(keys: any KeyStore, file: URL, out: (String) -> Void) throws {
-        let pinned = try RepoKeyFile.read(file)
+    private static func list(keys: any KeyStore, pins: KeyPins, out: (String) -> Void) throws {
+        let pinned = try pins.pinned()
         let stored = try keys.keys()
         if stored.isEmpty {
             out("No App Store Connect keys are stored. Store one with: xcflow auth --key-id <id> --p8 <path> [--issuer-id <issuer>].")
@@ -68,7 +66,7 @@ enum KeysCommand {
             out(line)
         }
         if let pinned, !stored.contains(where: { $0.keyID == pinned }) {
-            out("This repo uses key \(pinned) (\(RepoKeyFile.displayPath)), which isn't stored on this machine. Store it with: xcflow auth --key-id \(pinned) --issuer-id <issuer> --p8 <path>.")
+            out("This repo uses key \(pinned), which isn't stored on this machine. Store it with: xcflow auth --key-id \(pinned) --issuer-id <issuer> --p8 <path>, or pick a stored key with: xcflow keys use <key id>.")
         }
     }
 

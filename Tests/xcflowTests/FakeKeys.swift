@@ -37,3 +37,20 @@ final class FakeKeys: KeyStore, @unchecked Sendable {
         all[keyID] = nil
     }
 }
+
+extension KeyPins {
+    /// A test repo's pins: a store next to the repo instead of the real one, and no git.
+    static func test(_ root: URL) -> KeyPins {
+        KeyPins(
+            store: root.deletingLastPathComponent().appending(path: "\(root.lastPathComponent)-pins.json"),
+            repo: "example.com/team/app",
+            legacyFile: root.appending(path: "XcodeCloud/xcflow.json")
+        )
+    }
+
+    /// Writes the `XcodeCloud/xcflow.json` that xcflow 0.2.12 kept in the repo.
+    func writeLegacy(_ keyID: String) throws {
+        try FileManager.default.createDirectory(at: legacyFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{\n  \"keyID\" : \"\(keyID)\"\n}\n".utf8).write(to: legacyFile)
+    }
+}

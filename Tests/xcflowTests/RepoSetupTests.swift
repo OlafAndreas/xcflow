@@ -56,12 +56,13 @@ struct RepoSetupTests {
             secrets: secrets,
             keys: keys,
             interactive: false,
-            environment: [:]
+            environment: [:],
+            pins: .test(root)
         )
     }
 
     private func setup(_ root: URL, _ extra: [String] = []) async throws {
-        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--action-sha", sha] + extra, keys: FakeKeys(), interactive: false, environment: [:])
+        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--action-sha", sha] + extra, keys: FakeKeys(), interactive: false, environment: [:], pins: .test(root))
     }
 
     private func setupError(_ root: URL, _ extra: [String]) async -> String {
@@ -143,7 +144,7 @@ struct RepoSetupTests {
         let root = try makeRepo()
         let todo = try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets", "--dry-run"],
-            resolveActionCommit: { version in version == Version.current ? sha : nil }, keys: FakeKeys(), interactive: false, environment: [:])
+            resolveActionCommit: { version in version == Version.current ? sha : nil }, keys: FakeKeys(), interactive: false, environment: [:], pins: .test(root))
         #expect(!todo.contains { $0.contains("Pin `OlafAndreas/xcflow-action`") })
         #expect(files(in: root).isEmpty)
     }
@@ -152,7 +153,7 @@ struct RepoSetupTests {
         let root = try makeRepo()
         let todo = try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets"],
-            resolveActionCommit: { _ in nil }, keys: FakeKeys(), interactive: false, environment: [:])
+            resolveActionCommit: { _ in nil }, keys: FakeKeys(), interactive: false, environment: [:], pins: .test(root))
         let text = try String(contentsOf: root.appending(path: ".github/workflows/xcflow-plan.yml"), encoding: .utf8)
         #expect(text.contains("uses: OlafAndreas/xcflow-action@v\(Version.current)\n"))
         #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action` to its commit for v\(Version.current)") })
@@ -297,7 +298,7 @@ struct RepoSetupTests {
     }
 
     private func setupTodo(_ root: URL, _ extra: [String], client: AppStoreConnectClient? = nil, keys: FakeKeys = FakeKeys()) async throws -> [String] {
-        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--skip-secrets", "--action-sha", sha] + extra, client: client, keys: keys, interactive: false, environment: [:])
+        try await RepoSetup.run(arguments: ["--repo", root.path(percentEncoded: false), "--skip-secrets", "--action-sha", sha] + extra, client: client, keys: keys, interactive: false, environment: [:], pins: .test(root))
     }
 
     @Test func setupWithoutAManifestExplainsTheFirstTimeSetupAndStillWritesTheFiles() async throws {
@@ -497,7 +498,7 @@ struct RepoSetupTests {
         let root = try makeRepo()
         try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--products", "com.example.app", "--skip-export", "--skip-secrets"],
-            resolveActionCommit: { _ in nil }, keys: FakeKeys(), interactive: false, environment: [:])
+            resolveActionCommit: { _ in nil }, keys: FakeKeys(), interactive: false, environment: [:], pins: .test(root))
         let todo = try await setupTodo(root, ["--products", "com.example.app", "--skip-export"])
         #expect(try plan(root).contains("uses: OlafAndreas/xcflow-action@v\(Version.current)\n"))
         #expect(todo.contains { $0.hasPrefix("Pin `OlafAndreas/xcflow-action`") && $0.contains(".github/workflows/xcflow-plan.yml") && $0.contains("still reference the tag") })
@@ -532,7 +533,7 @@ struct RepoSetupTests {
         let secrets = FakeSecrets()
         let todo = try await RepoSetup.run(
             arguments: ["--repo", root.path(percentEncoded: false), "--yes", "--action-sha", sha, "--key-id", "ABC123", "--issuer-id", "issuer-1", "--p8", key.path],
-            client: AppStoreConnectClient(dryRun: server), secrets: secrets, keys: keys, interactive: false, environment: [:])
+            client: AppStoreConnectClient(dryRun: server), secrets: secrets, keys: keys, interactive: false, environment: [:], pins: .test(root))
         #expect(keys.stored?.keyID == "ABC123")
         #expect(keys.stored?.issuerID == "issuer-1")
         #expect(secrets.set["ASC_KEY_ID"] == "ABC123")
@@ -627,13 +628,14 @@ struct RepoSetupTests {
                 connections.used.append(credentials.keyID)
                 return AppStoreConnectClient(dryRun: server)
             },
-            input: { remaining.popFirst() }
+            input: { remaining.popFirst() },
+            pins: .test(root)
         )
         return (todo, connections.used)
     }
 
     private func pin(in root: URL) throws -> String? {
-        try RepoKeyFile.read(root.appending(path: "XcodeCloud/xcflow.json"))
+        try KeyPins.test(root).pinned()
     }
 
     @Test func anEnvironmentKeyIsUsedForTheExportAndNotPinned() async throws {
@@ -643,9 +645,9 @@ struct RepoSetupTests {
         let result = try await setupPinning(root, [], keys: keys, environment: environment)
         #expect(result.connected == ["ENV1"])
         #expect(files(in: root).contains("XcodeCloud/com.example.app/nightly-tests.json"))
-        #expect(!files(in: root).contains("XcodeCloud/xcflow.json"))
+        #expect(try pin(in: root) == nil)
         #expect(keys.stored == nil)
-        #expect(!result.todo.contains { $0.contains("xcflow.json") })
+        #expect(!result.todo.contains { $0.contains("pinned") })
     }
 
     @Test func theEnvironmentKeyWinsOverASingleStoredKey() async throws {
@@ -661,10 +663,11 @@ struct RepoSetupTests {
         let keys = FakeKeys(Credentials(keyID: "TEAM1", privateKeyPEM: teamPEM, issuerID: "issuer-1"))
         let first = try await setupPinning(root, [], keys: keys)
         #expect(first.connected == ["TEAM1"])
-        #expect(try String(contentsOf: root.appending(path: "XcodeCloud/xcflow.json"), encoding: .utf8) == "{\n  \"keyID\" : \"TEAM1\"\n}\n")
+        #expect(try pin(in: root) == "TEAM1")
+        #expect(!files(in: root).contains("XcodeCloud/xcflow.json"))
         let second = try await setupPinning(root, [], keys: keys)
         #expect(try pin(in: root) == "TEAM1")
-        #expect(!second.todo.contains { $0.contains("xcflow.json") })
+        #expect(!second.todo.contains { $0.contains("pinned") })
     }
 
     @Test func anIndividualKeyIsPinnedToo() async throws {
@@ -688,26 +691,26 @@ struct RepoSetupTests {
         let root = try makeRepo()
         let keys = FakeKeys(Credentials(keyID: "TEAM1", privateKeyPEM: teamPEM, issuerID: "issuer-1"))
         _ = try await setupPinning(root, ["--dry-run"], keys: keys)
-        #expect(files(in: root).allSatisfy { $0 != "XcodeCloud/xcflow.json" })
+        #expect(try pin(in: root) == nil)
     }
 
     @Test func aDifferentPinIsKeptWithATodoUnlessForced() async throws {
         let root = try makeRepo()
-        try RepoKeyFile.write("OTHER", to: root.appending(path: "XcodeCloud/xcflow.json"))
+        try KeyPins.test(root).pin("OTHER")
         let key = try writeKey()
         let flags = ["--key-id", "NEW1", "--issuer-id", "issuer-1", "--p8", key.path]
         let kept = try await setupPinning(root, flags, keys: FakeKeys())
         #expect(try pin(in: root) == "OTHER")
-        #expect(kept.todo.contains { $0.contains("XcodeCloud/xcflow.json") && $0.contains("OTHER") && $0.contains("NEW1") && $0.contains("--force") })
+        #expect(kept.todo.contains { $0.contains("pinned to key OTHER") && $0.contains("NEW1") && $0.contains("--force") })
 
         let forced = try await setupPinning(root, flags + ["--force"], keys: FakeKeys())
         #expect(try pin(in: root) == "NEW1")
-        #expect(!forced.todo.contains { $0.contains("xcflow.json") })
+        #expect(!forced.todo.contains { $0.contains("pinned") })
     }
 
     @Test func thePinPicksAmongSeveralStoredKeys() async throws {
         let root = try makeRepo()
-        try RepoKeyFile.write("B", to: root.appending(path: "XcodeCloud/xcflow.json"))
+        try KeyPins.test(root).pin("B")
         let keys = FakeKeys(Credentials(keyID: "A", privateKeyPEM: teamPEM, issuerID: "i"), Credentials(keyID: "B", privateKeyPEM: otherPEM, issuerID: "j"))
         let result = try await setupPinning(root, [], keys: keys)
         #expect(result.connected == ["B"])
@@ -757,7 +760,7 @@ struct RepoSetupTests {
 
     @Test func aPinNamingAnUnstoredKeySaysHowToStoreIt() async throws {
         let root = try makeRepo()
-        try RepoKeyFile.write("GONE", to: root.appending(path: "XcodeCloud/xcflow.json"))
+        try KeyPins.test(root).pin("GONE")
         let keys = FakeKeys(Credentials(keyID: "A", privateKeyPEM: teamPEM, issuerID: "i"))
         let result = try await setupPinning(root, [], keys: keys)
         #expect(result.connected.isEmpty)
@@ -767,14 +770,31 @@ struct RepoSetupTests {
 
     @Test func pinningReportsCreatedUnchangedAndKept() throws {
         let root = try makeRepo()
-        let url = root.appending(path: "XcodeCloud/xcflow.json")
-        #expect(try RepoSetup.pinKey("A", at: url, force: false, dryRun: true) == .created)
-        #expect(try RepoKeyFile.read(url) == nil)
-        #expect(try RepoSetup.pinKey("A", at: url, force: false, dryRun: false) == .created)
-        #expect(try RepoSetup.pinKey("A", at: url, force: false, dryRun: false) == .unchanged)
-        #expect(try RepoSetup.pinKey("B", at: url, force: false, dryRun: false) == .keptDifferent)
-        #expect(try RepoKeyFile.read(url) == "A")
-        #expect(try RepoSetup.pinKey("B", at: url, force: true, dryRun: false) == .overwritten)
-        #expect(try RepoKeyFile.read(url) == "B")
+        let pins = KeyPins.test(root)
+        #expect(try RepoSetup.pinKey("A", pins: pins, force: false, dryRun: true) == .created)
+        #expect(try pins.pinned() == nil)
+        #expect(try RepoSetup.pinKey("A", pins: pins, force: false, dryRun: false) == .created)
+        #expect(try RepoSetup.pinKey("A", pins: pins, force: false, dryRun: false) == .unchanged)
+        #expect(try RepoSetup.pinKey("B", pins: pins, force: false, dryRun: false) == .keptDifferent)
+        #expect(try pins.pinned() == "A")
+        #expect(try RepoSetup.pinKey("B", pins: pins, force: true, dryRun: false) == .overwritten)
+        #expect(try pins.pinned() == "B")
+    }
+
+    @Test func setupMovesALegacyPinOutOfTheRepo() async throws {
+        let root = try makeRepo()
+        try KeyPins.test(root).writeLegacy("B")
+        let keys = FakeKeys(Credentials(keyID: "A", privateKeyPEM: teamPEM, issuerID: "i"), Credentials(keyID: "B", privateKeyPEM: otherPEM, issuerID: "j"))
+        let result = try await setupPinning(root, [], keys: keys)
+        #expect(result.connected == ["B"])
+        #expect(try pin(in: root) == "B")
+        #expect(!files(in: root).contains("XcodeCloud/xcflow.json"))
+    }
+
+    @Test func aDryRunLeavesALegacyPinInPlace() async throws {
+        let root = try makeRepo()
+        try KeyPins.test(root).writeLegacy("A")
+        _ = try await setupPinning(root, ["--dry-run"], keys: FakeKeys(Credentials(keyID: "A", privateKeyPEM: teamPEM, issuerID: "i")))
+        #expect(files(in: root).contains("XcodeCloud/xcflow.json"))
     }
 }

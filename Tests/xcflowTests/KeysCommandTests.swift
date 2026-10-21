@@ -14,17 +14,17 @@ struct KeysCommandTests {
         return root
     }
 
-    private func repoFile(_ root: URL) -> URL {
-        root.appending(path: "XcodeCloud/xcflow.json")
+    private func pins(_ root: URL) -> KeyPins {
+        .test(root)
     }
 
     private func key(_ id: String, team: Bool = true) -> Credentials {
         Credentials(keyID: id, privateKeyPEM: "pem-\(id)", issuerID: team ? "issuer-\(id)" : nil)
     }
 
-    private func run(_ arguments: [String], keys: FakeKeys, file: URL) -> (code: Int32, output: Output) {
+    private func run(_ arguments: [String], keys: FakeKeys, pins: KeyPins) -> (code: Int32, output: Output) {
         let output = Output()
-        let code = KeysCommand.run(arguments: arguments, keys: keys, repoFile: file, out: { output.out.append($0) }, err: { output.err.append($0) })
+        let code = KeysCommand.run(arguments: arguments, keys: keys, pins: pins, out: { output.out.append($0) }, err: { output.err.append($0) })
         return (code, output)
     }
 
@@ -32,10 +32,10 @@ struct KeysCommandTests {
 
     @Test func listsTheStoredKeysAndMarksTheRepos() throws {
         let root = try makeRepo()
-        try RepoKeyFile.write("B", to: repoFile(root))
+        try pins(root).pin("B")
         let keys = FakeKeys(key("A"), key("B", team: false))
         keys.dates = ["A": noon, "B": noon]
-        let result = run([], keys: keys, file: repoFile(root))
+        let result = run([], keys: keys, pins: pins(root))
         #expect(result.code == 0)
         #expect(result.output.out == [
             "  A  team  stored 2026-10-21",
@@ -45,55 +45,66 @@ struct KeysCommandTests {
 
     @Test func listingWithoutARepoFileMarksNone() throws {
         let root = try makeRepo()
-        let result = run([], keys: FakeKeys(key("A")), file: repoFile(root))
+        let result = run([], keys: FakeKeys(key("A")), pins: pins(root))
         #expect(result.code == 0)
         #expect(result.output.out == ["  A  team"])
     }
 
     @Test func listingWithNoKeysSaysHowToStoreOne() throws {
         let root = try makeRepo()
-        let result = run([], keys: FakeKeys(), file: repoFile(root))
+        let result = run([], keys: FakeKeys(), pins: pins(root))
         #expect(result.code == 0)
         #expect(result.output.out.joined().contains("xcflow auth"))
     }
 
     @Test func listingNamesAPinnedKeyThatIsntStored() throws {
         let root = try makeRepo()
-        try RepoKeyFile.write("GONE", to: repoFile(root))
-        let result = run([], keys: FakeKeys(key("A")), file: repoFile(root))
+        try pins(root).pin("GONE")
+        let result = run([], keys: FakeKeys(key("A")), pins: pins(root))
         #expect(result.code == 0)
         #expect(result.output.out.contains { $0.contains("GONE") && $0.contains("isn't stored") })
     }
 
-    @Test func useWritesTheRepoFileCreatingXcodeCloud() throws {
+    @Test func usePinsTheRepoOutsideIt() throws {
         let root = try makeRepo()
-        let result = run(["use", "A"], keys: FakeKeys(key("A"), key("B")), file: repoFile(root))
+        let result = run(["use", "A"], keys: FakeKeys(key("A"), key("B")), pins: pins(root))
         #expect(result.code == 0)
-        #expect(try RepoKeyFile.read(repoFile(root)) == "A")
-        #expect(result.output.out == ["Pinned this repo to key A in XcodeCloud/xcflow.json."])
+        #expect(try pins(root).pinned() == "A")
+        #expect(result.output.out == ["Pinned this repo to key A on this machine."])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path(percentEncoded: false)).isEmpty)
+    }
+
+    @Test func useMovesALegacyPinOutOfTheRepo() throws {
+        let root = try makeRepo()
+        try pins(root).writeLegacy("A")
+        let result = run(["use", "B"], keys: FakeKeys(key("A"), key("B")), pins: pins(root))
+        #expect(result.code == 0)
+        #expect(try pins(root).pinned() == "B")
+        #expect(!FileManager.default.fileExists(atPath: pins(root).legacyFile.path(percentEncoded: false)))
+        #expect(result.output.out.last == "Pinned this repo to key B on this machine.")
     }
 
     @Test func useReplacesAnExistingPin() throws {
         let root = try makeRepo()
-        try RepoKeyFile.write("A", to: repoFile(root))
-        #expect(run(["use", "B"], keys: FakeKeys(key("A"), key("B")), file: repoFile(root)).code == 0)
-        #expect(try RepoKeyFile.read(repoFile(root)) == "B")
+        try pins(root).pin("A")
+        #expect(run(["use", "B"], keys: FakeKeys(key("A"), key("B")), pins: pins(root)).code == 0)
+        #expect(try pins(root).pinned() == "B")
     }
 
     @Test func useRefusesAnUnstoredKey() throws {
         let root = try makeRepo()
-        let result = run(["use", "NOPE"], keys: FakeKeys(key("A")), file: repoFile(root))
+        let result = run(["use", "NOPE"], keys: FakeKeys(key("A")), pins: pins(root))
         #expect(result.code == 2)
         #expect(result.output.err.joined().contains("NOPE"))
         #expect(result.output.err.joined().contains("xcflow auth --key-id NOPE"))
-        #expect(try RepoKeyFile.read(repoFile(root)) == nil)
+        #expect(try pins(root).pinned() == nil)
         #expect(!FileManager.default.fileExists(atPath: root.appending(path: "XcodeCloud").path(percentEncoded: false)))
     }
 
     @Test func removeDeletesOnlyThatKey() throws {
         let root = try makeRepo()
         let keys = FakeKeys(key("A"), key("B"))
-        let result = run(["remove", "A"], keys: keys, file: repoFile(root))
+        let result = run(["remove", "A"], keys: keys, pins: pins(root))
         #expect(result.code == 0)
         #expect(try keys.keys().map(\.keyID) == ["B"])
         #expect(result.output.out.first == "Removed key A from the Keychain.")
@@ -102,7 +113,7 @@ struct KeysCommandTests {
     @Test func removeRefusesAnUnstoredKey() throws {
         let root = try makeRepo()
         let keys = FakeKeys(key("A"))
-        let result = run(["remove", "NOPE"], keys: keys, file: repoFile(root))
+        let result = run(["remove", "NOPE"], keys: keys, pins: pins(root))
         #expect(result.code == 2)
         #expect(result.output.err.joined().contains("NOPE"))
         #expect(try keys.keys().map(\.keyID) == ["A"])
@@ -111,22 +122,22 @@ struct KeysCommandTests {
     @Test func removingThePinnedKeyIsAllowedAndTheNextCommandSaysHowToStoreIt() throws {
         let root = try makeRepo()
         let keys = FakeKeys(key("A"), key("B"))
-        #expect(run(["use", "A"], keys: keys, file: repoFile(root)).code == 0)
-        let removed = run(["remove", "A"], keys: keys, file: repoFile(root))
+        #expect(run(["use", "A"], keys: keys, pins: pins(root)).code == 0)
+        let removed = run(["remove", "A"], keys: keys, pins: pins(root))
         #expect(removed.code == 0)
-        #expect(removed.output.out.contains { $0.contains("xcflow.json") && $0.contains("xcflow keys use") })
-        #expect(throws: (any Error).self) { try loadKey(root: root.appending(path: "XcodeCloud"), keys: keys, environment: [:]) }
+        #expect(removed.output.out.contains { $0.contains("still pinned") && $0.contains("xcflow keys use") })
+        #expect(throws: (any Error).self) { try loadKey(root: root.appending(path: "XcodeCloud"), keys: keys, environment: [:], pins: pins(root)) }
         do {
-            _ = try loadKey(root: root.appending(path: "XcodeCloud"), keys: keys, environment: [:])
+            _ = try loadKey(root: root.appending(path: "XcodeCloud"), keys: keys, environment: [:], pins: pins(root))
         } catch {
-            #expect(error.localizedDescription == "This repo uses key A (XcodeCloud/xcflow.json), which isn't stored on this machine. Store it with: xcflow auth --key-id A --issuer-id <issuer> --p8 <path>.")
+            #expect(error.localizedDescription == "This repo uses key A, which isn't stored on this machine. Store it with: xcflow auth --key-id A --issuer-id <issuer> --p8 <path>, or pick a stored key with: xcflow keys use <key id>.")
         }
     }
 
     @Test func badUsageExits64() throws {
         let root = try makeRepo()
         for arguments in [["use"], ["remove"], ["frob"], ["use", "A", "B"], ["list", "extra"]] {
-            let result = run(arguments, keys: FakeKeys(key("A")), file: repoFile(root))
+            let result = run(arguments, keys: FakeKeys(key("A")), pins: pins(root))
             #expect(result.code == 64, "\(arguments)")
             #expect(!result.output.err.isEmpty)
         }
@@ -135,31 +146,42 @@ struct KeysCommandTests {
     @Test func aMalformedRepoFileIsAnError() throws {
         let root = try makeRepo()
         try FileManager.default.createDirectory(at: root.appending(path: "XcodeCloud"), withIntermediateDirectories: true)
-        try "nope".write(to: repoFile(root), atomically: true, encoding: .utf8)
-        let result = run([], keys: FakeKeys(key("A")), file: repoFile(root))
+        try "nope".write(to: pins(root).legacyFile, atomically: true, encoding: .utf8)
+        let result = run([], keys: FakeKeys(key("A")), pins: pins(root))
         #expect(result.code == 2)
         #expect(result.output.err.joined().contains("isn't valid"))
     }
 
     // MARK: - auth pins the repo
 
-    @Test func authPinsARepoWithXcodeCloudAndNoFile() throws {
+    @Test func authPinsARepoWithXcodeCloudAndNoPin() throws {
         let root = try makeRepo()
         try FileManager.default.createDirectory(at: root.appending(path: "XcodeCloud"), withIntermediateDirectories: true)
-        #expect(try Auth.pinIfUnpinned("ABC123", file: repoFile(root)) == "Pinned this repo to key ABC123 in XcodeCloud/xcflow.json.")
-        #expect(try RepoKeyFile.read(repoFile(root)) == "ABC123")
+        #expect(try Auth.pinIfUnpinned("ABC123", pins: pins(root)) == ["Pinned this repo to key ABC123 on this machine."])
+        #expect(try pins(root).pinned() == "ABC123")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.appending(path: "XcodeCloud").path(percentEncoded: false)).isEmpty)
     }
 
     @Test func authLeavesAnExistingPin() throws {
         let root = try makeRepo()
-        try RepoKeyFile.write("OTHER", to: repoFile(root))
-        #expect(try Auth.pinIfUnpinned("ABC123", file: repoFile(root)) == nil)
-        #expect(try RepoKeyFile.read(repoFile(root)) == "OTHER")
+        try FileManager.default.createDirectory(at: root.appending(path: "XcodeCloud"), withIntermediateDirectories: true)
+        try pins(root).pin("OTHER")
+        #expect(try Auth.pinIfUnpinned("ABC123", pins: pins(root)).isEmpty)
+        #expect(try pins(root).pinned() == "OTHER")
+    }
+
+    @Test func authMovesALegacyPinAndKeepsIt() throws {
+        let root = try makeRepo()
+        try pins(root).writeLegacy("OTHER")
+        let lines = try Auth.pinIfUnpinned("ABC123", pins: pins(root))
+        #expect(lines == ["Removed XcodeCloud/xcflow.json; this repo's key (OTHER) is now pinned on this machine instead of in the repo."])
+        #expect(try pins(root).pinned() == "OTHER")
+        #expect(!FileManager.default.fileExists(atPath: pins(root).legacyFile.path(percentEncoded: false)))
     }
 
     @Test func authOutsideAnXcflowRepoOnlyStores() throws {
         let root = try makeRepo()
-        #expect(try Auth.pinIfUnpinned("ABC123", file: repoFile(root)) == nil)
+        #expect(try Auth.pinIfUnpinned("ABC123", pins: pins(root)).isEmpty)
         #expect(!FileManager.default.fileExists(atPath: root.appending(path: "XcodeCloud").path(percentEncoded: false)))
     }
 }
