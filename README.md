@@ -48,12 +48,29 @@ Xcode Cloud has to be switched on for the app first: create its first workflow i
    - `.github/dependabot.yml`, so Dependabot opens a pull request when a new xcflow is out. The plan check doesn't run on those pull requests, because they can't read the repo's secrets; the bump merges on the strength of xcflow's own release checks, and the nightly sync is the first run of the new version in that repo.
    - With `--claude`: `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files, and an `xcflow` entry in `.mcp.json`, so it can read Xcode Cloud through xcflow.
    - The `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from the team key. `setup` checks first and skips this step when all three are already set; `--replace-secrets` sets them again.
+   - `XcodeCloud/xcflow.json`, naming the key this repo uses (`{"keyID": "<id>"}`), so a machine with keys for several teams picks the right one. It holds only the id; the key itself stays in the Keychain.
 
    When it's done, review the new files with `git status`, commit them and open a pull request. The plan check posts what would change in Xcode Cloud, and the repo is ready.
 
    Run it again at any time; files that already match are left alone, and a newer pin that Dependabot made is kept.
 
    A repo set up by an earlier xcflow loses its `.github/actions/xcflow/` on the next `setup` once the file is untouched and no workflow uses it any more. While a workflow still references it, or if it was edited, `setup` keeps it and says what to do in the to-do list.
+
+### Keys for several teams
+
+xcflow keeps any number of keys in the Keychain, one per key id, and picks one for each command in this order:
+
+1. The `ASC_KEY_ID` and `ASC_KEY_CONTENT` environment variables, when set. CI always works this way.
+2. The key named in the repo's `XcodeCloud/xcflow.json`.
+3. The only stored key, when there is just one.
+
+With several keys stored and no `xcflow.json`, xcflow stops and asks you to pick one with `xcflow keys use <key id>`. `setup` asks in a terminal, and `auth` pins the key it stores in a repo that has an `XcodeCloud/` folder and no pin yet.
+
+```bash
+xcflow keys                  # the stored keys; * marks this repo's
+xcflow keys use <key id>     # pin this repo to a stored key
+xcflow keys remove <key id>  # delete a key from the Keychain
+```
 
 ## How it works
 
@@ -69,6 +86,7 @@ Only products with a folder in `XcodeCloud/` are managed. Deleting a workflow's 
 |---|---|
 | `xcflow setup` | Adds the files above to the current repo. |
 | `xcflow auth --key-id <id> --p8 <path> [--issuer-id <id>]` | Checks a key against App Store Connect and stores it in the Keychain. |
+| `xcflow keys [use <id> \| remove <id>]` | Lists the stored keys, pins this repo to one, or removes one. |
 | `xcflow plan` | Validates `XcodeCloud/` and prints what would change. Reads only. |
 | `xcflow apply` | Makes those changes. Meant for CI on the default branch. |
 | `xcflow export [<bundle id> …]` | Writes the live workflows to `XcodeCloud/`. Without ids: the products already there, or the ones in the project's Xcode Cloud manifest. |
