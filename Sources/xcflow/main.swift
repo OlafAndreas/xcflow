@@ -25,7 +25,7 @@ case "setup":
     await runOrExit("setup") { _ = try await RepoSetup.run(arguments: Array(arguments.dropFirst())) }
 case "get" where arguments.count >= 2:
     await runOrExit("get") {
-        let client = AppStoreConnectClient(tokens: try TokenProvider(credentials: try CredentialStore.load()))
+        let client = AppStoreConnectClient(tokens: try TokenProvider(credentials: try loadKey(root: nil)))
         let query = Dictionary(uniqueKeysWithValues: arguments.dropFirst(2).compactMap { pair -> (String, String)? in
             let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
             return parts.count == 2 ? (parts[0], parts[1]) : nil

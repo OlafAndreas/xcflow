@@ -17,6 +17,22 @@ struct WorkflowSyncTests {
         #expect(plan.unchanged == 2)
     }
 
+    @Test func aRepoConfigNextToTheProductFoldersChangesNothing() async throws {
+        let snapshot = try Fixtures.standard()
+        let desired = try Fixtures.makeFolder([
+            "xcflow.json": ["keyID": "ABC123"],
+            "com.example.app/nightly-tests.json": Fixtures.workflow(id: Fixtures.nightlyID, name: "Nightly tests"),
+            "com.example.app/release.json": Fixtures.workflow(id: Fixtures.releaseID, name: "Release")
+        ])
+        let (plan, _) = try await plan(desired: desired, snapshot: snapshot)
+        #expect(plan.errors.isEmpty)
+        #expect(plan.changes.isEmpty)
+        #expect(plan.unchanged == 2)
+        let sync = WorkflowSync(client: AppStoreConnectClient(dryRun: try DryRunServer(snapshot: snapshot, desired: desired)), root: desired)
+        _ = try await sync.export(bundleIDs: [])
+        #expect(FileManager.default.fileExists(atPath: desired.appending(path: "xcflow.json").path))
+    }
+
     @Test func displayLabelsAreIgnored() throws {
         let withLabels = try WorkflowDefinition(fileJSON: Fixtures.workflow(id: Fixtures.nightlyID, name: "Nightly tests"))
         let rendered = WorkflowSync.canonical(withLabels.attributes)

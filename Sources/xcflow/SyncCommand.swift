@@ -24,7 +24,7 @@ enum SyncCommand {
                 dryRun = try DryRunServer(snapshot: directory(snapshot), desired: root)
             }
             let client = try dryRun.map(AppStoreConnectClient.init(dryRun:))
-                ?? AppStoreConnectClient(tokens: TokenProvider(credentials: CredentialStore.load()))
+                ?? AppStoreConnectClient(tokens: TokenProvider(credentials: try loadKey(root: root)))
             let sync = WorkflowSync(client: client, root: root)
             switch command {
             case "export":
