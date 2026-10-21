@@ -72,11 +72,32 @@ Only products with a folder in `XcodeCloud/` are managed. Deleting a workflow's 
 | `xcflow plan` | Validates `XcodeCloud/` and prints what would change. Reads only. |
 | `xcflow apply` | Makes those changes. Meant for CI on the default branch. |
 | `xcflow export [<bundle id> …]` | Writes the live workflows to `XcodeCloud/`. Without ids: the products already there, or the ones in the project's Xcode Cloud manifest. |
+| `xcflow builds [<workflow>] [--branch <name>] [--limit <n>]` | Lists recent builds, newest first. |
+| `xcflow build <number or id> [--wait] [--timeout <minutes>]` | Shows a build: its actions, compiler errors and failing tests. With `--wait`, waits for it to finish first. |
+| `xcflow logs <number or id> [--action <name>]` | Downloads a build's logs and prints where they went. |
+| `xcflow run <workflow> (--branch <name> \| --tag <name>) [--clean] [--wait] [--timeout <minutes>]` | Starts a build. With `--wait`, waits for it to finish. |
 | `xcflow get <path> [key=value …]` | Prints a raw App Store Connect API response. |
 
 `--dry-run <folder>` with `plan`, `apply` or `export` answers from the workflow files in that folder instead of the API, and prints every request it would send. Nothing is sent and no key is needed. Copy `XcodeCloud/` before editing and pass the copy to see exactly what a change would do.
 
 In CI, the key comes from the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 of the `.p8`) environment variables instead of the Keychain. On Linux, which has no Keychain, the environment variables are the only way. Reads that App Store Connect fails with a 5xx or 429 are retried; writes never are.
+
+### Builds from CI
+
+The build commands read and start builds in the products that have a folder in `XcodeCloud/`; `--product <bundle id>` or `--all` widens or narrows that. A GitHub workflow can start a build and gate on how it ends:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: OlafAndreas/xcflow-action@v0.2.10
+  - run: xcflow run "Nightly tests" --branch "${{ github.ref_name }}" --wait
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+```
+
+Interrupting the command or letting `--timeout` pass (120 minutes by default) leaves the build running in Xcode Cloud. With `--wait` the exit code is 0 when the build succeeded, 1 when it failed, 2 when xcflow couldn't finish (App Store Connect or the network failed, or the workflow wasn't found) and 124 when the wait timed out.
 
 ## MCP server
 
