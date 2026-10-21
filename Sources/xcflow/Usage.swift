@@ -8,7 +8,7 @@ enum Usage {
                                         Add the workflow files and GitHub Actions to this repo. --claude also adds the Claude Code skill, rule and MCP entry.
                                         One team key does it all: kept for xcflow, used for the export, set as the GitHub secrets.
                                         Asked for in a terminal when none is stored, or given with the three flags.
-      auth --key-id <KEY_ID> --p8 <path> Store your App Store Connect API key in the Keychain.
+      auth --key-id <KEY_ID> --p8 <path> [--issuer-id <id>] Store your App Store Connect API key in the Keychain.
       plan [--dry-run <folder>]         Validate XcodeCloud/ and show what would change in Xcode Cloud.
       apply [--dry-run <folder>]        Make those changes. The GitHub Action runs this on the default branch.
       export [<bundle id> …]            Write the live workflows to XcodeCloud/. Without ids: the products already there,
