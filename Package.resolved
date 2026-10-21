@@ -1,5 +1,5 @@
 {
-  "originHash" : "8ef890de7eb0b9ceffb88ed90e46255793b0a82a267df77826743f4425a3fa22",
+  "originHash" : "a4c80ec190089ffd8e7a13e889559a7a5868f8299ddadd4fbd0706f29e213579",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -47,12 +47,30 @@
       }
     },
     {
+      "identity" : "swift-discovery",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OlafAndreas/swift-discovery.git",
+      "state" : {
+        "revision" : "a6c22c04d2927345bc6601c64f997f52989c33f4",
+        "version" : "0.2.0"
+      }
+    },
+    {
       "identity" : "swift-log",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
         "revision" : "4038b6a4f74a1426f47eb1dd5b4bb5628a15d597",
         "version" : "1.16.1"
+      }
+    },
+    {
+      "identity" : "swift-mediator",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OlafAndreas/swift-mediator.git",
+      "state" : {
+        "revision" : "8ab6bd37139feb2550d0de861e7ee601c71a10ab",
+        "version" : "0.1.2"
       }
     },
     {
@@ -71,6 +89,24 @@
       "state" : {
         "revision" : "a0ae212ebf6eab5f754c3129608bc5557637e605",
         "version" : "0.12.1"
+      }
+    },
+    {
+      "identity" : "swift-sections",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OlafAndreas/swift-sections.git",
+      "state" : {
+        "revision" : "29c0bdf1cd2b69660f458873bf75585af9c75e69",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "050f1a346fbbac0ca2cfb15a95274f7bd1cf0ccf",
+        "version" : "604.0.0"
       }
     },
     {

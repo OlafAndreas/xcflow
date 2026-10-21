@@ -6,13 +6,15 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.1"),
-        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0")
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
+        .package(url: "https://github.com/OlafAndreas/swift-mediator.git", from: "0.1.2")
     ],
     targets: [
         .executableTarget(
             name: "xcflow",
             dependencies: [
                 .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "SwiftMediator", package: "swift-mediator"),
                 .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))
             ]
         ),
@@ -20,6 +22,7 @@ let package = Package(
             name: "xcflowTests",
             dependencies: [
                 "xcflow",
+                .product(name: "SwiftMediatorTesting", package: "swift-mediator"),
                 .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))
             ]
         )

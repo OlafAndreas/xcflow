@@ -1,4 +1,5 @@
 import MCP
+import SwiftMediator
 
 private enum Schema {
     static let workflow: Value = [
@@ -64,12 +65,12 @@ struct ListBuildsTool: MCPTool {
     )
 
     static func run(_ tools: XcodeCloudTools, _ client: AppStoreConnectClient, _ arguments: Arguments) async throws -> String {
-        try await tools.builds.listBuilds(
-            client,
+        try await Mediator.send(ListBuilds(
+            builds: tools.builds,
             workflow: arguments.string("workflow"),
             branch: arguments.string("branch"),
             limit: arguments.int("limit") ?? 10
-        )
+        ), client: client)
     }
 }
 

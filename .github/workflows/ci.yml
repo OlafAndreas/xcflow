@@ -46,5 +46,25 @@ jobs:
 
       - name: Build the release binary
         run: |
+          rm -rf .build/release .build/*-unknown-linux-gnu/release
+          START=$(date +%s)
           swift build -c release --static-swift-stdlib
-          "$(swift build -c release --static-swift-stdlib --show-bin-path)/xcflow" --version
+          echo "Spike: static release build took $(( $(date +%s) - START ))s"
+          BIN="$(swift build -c release --static-swift-stdlib --show-bin-path)/xcflow"
+          "$BIN" --version
+          echo "Spike: binary size $(stat -c %s "$BIN") bytes"
+
+      # Spike: a fake key makes the handler's first request come back 401; a missing handler fails before any request.
+      - name: Spike - the handler is discovered in the static binary, stripped too
+        run: |
+          BIN="$(swift build -c release --static-swift-stdlib --show-bin-path)/xcflow"
+          strip -o /tmp/xcflow-stripped "$BIN"
+          echo "Spike: stripped size $(stat -c %s /tmp/xcflow-stripped) bytes"
+          command -v openssl >/dev/null || (apt-get update -qq && apt-get install -y -qq openssl >/dev/null)
+          openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt > /tmp/fake.p8
+          export ASC_KEY_ID=FAKEKEY123 ASC_ISSUER_ID=00000000-0000-0000-0000-000000000000 ASC_KEY_CONTENT="$(base64 -w0 /tmp/fake.p8)"
+          for B in "$BIN" /tmp/xcflow-stripped; do
+            OUT=$("$B" builds --all 2>&1 || true)
+            echo "$B: $OUT"
+            echo "$OUT" | grep -q "returned 401" || { echo "::error::$B didn't reach the handler."; exit 1; }
+          done

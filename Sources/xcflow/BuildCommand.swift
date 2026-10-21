@@ -1,4 +1,5 @@
 import Foundation
+import SwiftMediator
 
 /// `xcflow builds`, `build`, `logs` and `run`: the build tools on the command line, scoped by the repo's XcodeCloud folders.
 enum BuildCommand {
@@ -81,7 +82,7 @@ enum BuildCommand {
             switch command {
             case "builds":
                 let limit = options.values["--limit"].flatMap(Int.init) ?? 20
-                out(try await builds.listBuilds(client, workflow: options.positionals.first, branch: options.values["--branch"], limit: limit))
+                out(try await Mediator.send(ListBuilds(builds: builds, workflow: options.positionals.first, branch: options.values["--branch"], limit: limit), client: client))
                 return 0
             case "build":
                 let reference = options.positionals[0]
