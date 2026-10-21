@@ -184,15 +184,6 @@ protocol KeyStore {
     func remove(keyID: String) throws
 }
 
-extension KeyStore {
-    /// The only stored key; `CredentialError.missing` when there is none or several.
-    func load() throws -> Credentials {
-        let stored = try keys()
-        guard stored.count == 1, let only = stored.first else { throw CredentialError.missing }
-        return try load(keyID: only.keyID)
-    }
-}
-
 /// The Keychain items with service "xcflow".
 struct KeychainKeyStore: KeyStore {
     func keys() throws -> [StoredKey] { try CredentialStore.storedKeys() }

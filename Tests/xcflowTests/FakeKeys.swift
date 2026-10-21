@@ -4,6 +4,8 @@ import Foundation
 /// Stands in for the Keychain: several keys side by side, one item per key id.
 final class FakeKeys: KeyStore, @unchecked Sendable {
     private(set) var all: [String: Credentials] = [:]
+    /// When each key was stored, for the listing; nil unless a test sets it.
+    var dates: [String: Date] = [:]
 
     init(_ initial: Credentials...) {
         for credentials in initial {
@@ -18,7 +20,7 @@ final class FakeKeys: KeyStore, @unchecked Sendable {
 
     func keys() throws -> [StoredKey] {
         all.values
-            .map { StoredKey(keyID: $0.keyID, isTeamKey: $0.issuerID != nil, stored: nil) }
+            .map { StoredKey(keyID: $0.keyID, isTeamKey: $0.issuerID != nil, stored: dates[$0.keyID]) }
             .sorted { $0.keyID < $1.keyID }
     }
 

@@ -46,13 +46,4 @@ struct KeyStoreTests {
         #expect(try store.keys().map(\.keyID) == ["ZED"])
         #expect(throws: CredentialError.self) { try store.load(keyID: "ABC") }
     }
-
-    @Test func loadWithoutAnIdReturnsTheOnlyKey() throws {
-        #expect(try FakeKeys(key("ABC")).load().keyID == "ABC")
-    }
-
-    @Test func loadWithoutAnIdIsMissingForNoneOrSeveral() {
-        #expect(throws: CredentialError.self) { try FakeKeys().load() }
-        #expect(throws: CredentialError.self) { try FakeKeys(key("A"), key("B")).load() }
-    }
 }
