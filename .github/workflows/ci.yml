@@ -33,7 +33,7 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    container: swift:6.3-jammy
+    container: swift:6.3-noble
 
     steps:
       - name: Checkout repository
@@ -46,4 +46,4 @@ jobs:
           echo "Spike: prebuilts:"; find .build/prebuilts -maxdepth 3 2>/dev/null || echo "Spike: no prebuilts directory"
           grep -A3 '"swift-syntax"' Package.resolved
           for f in $(find .build/prebuilts -name '*.json'); do echo "Spike: manifest $f"; cat "$f"; echo; done
-          echo "Spike: SwiftParser objects built: $(find .build -path '*SwiftParser.build*' -name '*.o' | wc -l)"
+          echo "Spike: SwiftParser compiled from source: $(swift build -v 2>&1 >/dev/null; find .build -name 'SwiftParser*.swiftmodule' -path '*debug*' | wc -l)"
