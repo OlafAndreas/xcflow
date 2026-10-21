@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// The products a caller may see. The MCP server scopes to the apps chosen with choose_apps.
 typealias ProductScope = @Sendable (AppStoreConnectClient) async throws -> [Product]
