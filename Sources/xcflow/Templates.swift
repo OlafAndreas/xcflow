@@ -224,6 +224,8 @@ enum Templates {
 
     One folder per Xcode Cloud product, named by its bundle id, and one JSON file per workflow, e.g. `XcodeCloud/com.example.app/nightly-tests.json`. Only products with a folder are managed; xcflow never touches the others.
 
+    `XcodeCloud/xcflow.json` names the App Store Connect key this repo uses on a developer's machine (`{"keyID": "<id>"}`), for anyone with keys for several teams. It holds only the id. CI ignores it and uses the repo's secrets.
+
     ## A workflow file
 
     ```json
