@@ -87,17 +87,21 @@ In CI, the key comes from the `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT
 The build commands read and start builds in the products that have a folder in `XcodeCloud/`; `--product <bundle id>` or `--all` widens or narrows that. A GitHub workflow can start a build and gate on how it ends:
 
 ```yaml
+runs-on: ubuntu-latest
 steps:
   - uses: actions/checkout@v7
-  - uses: OlafAndreas/xcflow-action@v0.2.10
-  - run: xcflow run "Nightly tests" --branch "${{ github.ref_name }}" --wait
+  - uses: OlafAndreas/xcflow-action@v0.2.11
+  - run: xcflow run "Nightly tests" --branch "$REF" --wait
     env:
+      REF: ${{ github.ref_name }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
 ```
 
-Interrupting the command or letting `--timeout` pass (120 minutes by default) leaves the build running in Xcode Cloud. With `--wait` the exit code is 0 when the build succeeded, 1 when it failed, 2 when xcflow couldn't finish (App Store Connect or the network failed, or the workflow wasn't found) and 124 when the wait timed out.
+The branch goes through `env` rather than straight into the script, so a branch name can't inject shell commands. On `pull_request` events, use `github.head_ref` instead of `github.ref_name`.
+
+Interrupting the command or letting `--timeout` pass (120 minutes by default) leaves the build running in Xcode Cloud. With `--wait` the exit code is 0 when the build succeeded, 1 when it failed, 2 when xcflow couldn't finish (App Store Connect or the network failed, or the workflow wasn't found), 64 for a usage error (a missing or unknown flag) and 124 when the wait timed out.
 
 ## MCP server
 
