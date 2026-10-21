@@ -3,7 +3,7 @@ import Foundation
 import Security
 #endif
 
-struct Credentials: Sendable {
+struct Credentials: Sendable, Equatable {
     let keyID: String
     let privateKeyPEM: String
     var issuerID: String?
@@ -16,8 +16,7 @@ enum CredentialStore {
         try fromEnvironment() ?? fromKeychain()
     }
 
-    private static func fromEnvironment() throws -> Credentials? {
-        let environment = ProcessInfo.processInfo.environment
+    static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) throws -> Credentials? {
         guard let keyID = environment["ASC_KEY_ID"], let content = environment["ASC_KEY_CONTENT"] else {
             return nil
         }
