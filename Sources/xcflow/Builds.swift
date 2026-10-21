@@ -59,7 +59,12 @@ extension Builds {
                     default: break
                     }
                 }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as URLError where error.code == .cancelled {
+                throw CancellationError()
             } catch {
+                try Task.checkCancellation()
                 if clock.now - lastContact >= contactLimit {
                     throw WaitError.lostContact(number: number, runID: runID)
                 }

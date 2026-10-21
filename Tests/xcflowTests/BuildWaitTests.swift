@@ -80,5 +80,27 @@ extension CannedAPISuites {
                 #expect(error == .timedOut(number: "12", runID: "run-12", minutes: 0))
             }
         }
+
+        @Test func failingPollsStillTimeOut() async throws {
+            let lines = Lines()
+            do {
+                _ = try await wait([.status(500)], timeout: .milliseconds(20), contactLimit: .seconds(5), lines: lines)
+                Issue.record("Expected timedOut")
+            } catch let error as WaitError {
+                #expect(error == .timedOut(number: "run-12", runID: "run-12", minutes: 0))
+            }
+        }
+
+        @Test func cancellingTheTaskThrowsCancellation() async throws {
+            CannedAPI.reset([Self.key: [Self.poll("RUNNING")]])
+            let client = try CannedAPI.client()
+            let builds = self.builds
+            let task = Task {
+                try await builds.wait(client, runID: "run-12", every: .milliseconds(1), timeout: .seconds(30), contactLimit: .seconds(30)) { _ in }
+            }
+            try await Task.sleep(for: .milliseconds(20))
+            task.cancel()
+            await #expect(throws: CancellationError.self) { try await task.value }
+        }
     }
 }
