@@ -12,10 +12,6 @@ struct Credentials: Sendable, Equatable {
 enum CredentialStore {
     private static let service = "xcflow"
 
-    static func load() throws -> Credentials {
-        try fromEnvironment() ?? fromKeychain()
-    }
-
     static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) throws -> Credentials? {
         guard let keyID = environment["ASC_KEY_ID"], let content = environment["ASC_KEY_CONTENT"] else {
             return nil
@@ -123,29 +119,6 @@ enum CredentialStore {
         }
     }
 
-    private static func fromKeychain() throws -> Credentials {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status != errSecItemNotFound else {
-            throw CredentialError.missing
-        }
-        guard status == errSecSuccess,
-              let item = result as? [String: Any],
-              let keyID = item[kSecAttrAccount as String] as? String,
-              let data = item[kSecValueData as String] as? Data,
-              let pem = String(data: data, encoding: .utf8)
-        else {
-            throw CredentialError.keychain(status)
-        }
-        return Credentials(keyID: keyID, privateKeyPEM: pem, issuerID: issuerID(fromGeneric: item[kSecAttrGeneric as String] as? Data))
-    }
     #else
     static func save(_ credentials: Credentials) throws {
         throw CredentialError.noKeychain
@@ -158,10 +131,6 @@ enum CredentialStore {
     }
 
     static func remove(keyID: String) throws {
-        throw CredentialError.noKeychain
-    }
-
-    private static func fromKeychain() throws -> Credentials {
         throw CredentialError.noKeychain
     }
     #endif

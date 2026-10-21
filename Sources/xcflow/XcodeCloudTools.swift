@@ -21,7 +21,7 @@ private actor ClientCache {
         if let cached {
             return cached
         }
-        let client = AppStoreConnectClient(tokens: try TokenProvider(credentials: try CredentialStore.load()))
+        let client = AppStoreConnectClient(tokens: try TokenProvider(credentials: try loadKey(root: nil)))
         cached = client
         return client
     }

@@ -77,7 +77,7 @@ enum BuildCommand {
         }
 
         do {
-            let client = try client ?? AppStoreConnectClient(tokens: TokenProvider(credentials: CredentialStore.load()))
+            let client = try client ?? AppStoreConnectClient(tokens: TokenProvider(credentials: loadKey(root: root)))
             switch command {
             case "builds":
                 let limit = options.values["--limit"].flatMap(Int.init) ?? 20
