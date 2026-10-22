@@ -9,11 +9,15 @@ enum Templates {
             File(path: ".github/workflows/xcflow-plan.yml", content: planWorkflow.replacing("{{action}}", with: action.uses)),
             File(path: ".github/workflows/xcflow-apply.yml", content: applyWorkflow.replacing("{{action}}", with: action.uses)),
             File(path: ".github/workflows/xcflow-sync.yml", content: syncWorkflow.replacing("{{action}}", with: action.uses)),
-            File(path: "XcodeCloud/README.md", content: workflowsReadme),
-            File(path: ".claude/skills/edit-xcode-cloud-workflow/SKILL.md", content: skill),
-            File(path: ".claude/rules/xcode-cloud.md", content: rule)
-        ]
+        ] + docs
     }
+
+    /// The files `xcflow docs` keeps current. The skill is a stub that loads its body from the installed xcflow with `xcflow guide skill`.
+    static let docs = [
+        File(path: "XcodeCloud/README.md", content: workflowsReadme),
+        File(path: ".claude/skills/edit-xcode-cloud-workflow/SKILL.md", content: skillStub),
+        File(path: ".claude/rules/xcode-cloud.md", content: rule)
+    ]
 
     static var mcpServer: [String: Any] {
         ["type": "stdio", "command": "xcflow", "args": [String](), "env": [String: String]()]
@@ -180,25 +184,40 @@ enum Templates {
               ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
             run: xcflow export
 
+          - name: Bring xcflow's docs up to date
+            run: xcflow docs
+
           - name: Describe the changes
             run: |
               BODY="$RUNNER_TEMP/xcflow-sync.md"
+              WORKFLOWS=$(git status --porcelain --untracked-files=all -- 'XcodeCloud/*.json')
+              DOCS=$(git status --porcelain --untracked-files=all -- XcodeCloud/README.md .claude/skills/edit-xcode-cloud-workflow .claude/rules/xcode-cloud.md)
               {
-                echo "Workflows in App Store Connect no longer match the files in \`XcodeCloud/\`. Someone changed them there by hand, or Xcode Cloud did."
-                echo
-                git status --porcelain --untracked-files=all XcodeCloud | while read -r STATUS FILE; do
-                  PRODUCT=$(basename "$(dirname "$FILE")")
-                  case "$STATUS" in
-                    D) echo "- Deleted in App Store Connect: **$(git show "HEAD:$FILE" | jq -r .attributes.name)** ($PRODUCT)" ;;
-                    '??') echo "- New in App Store Connect: **$(jq -r .attributes.name "$FILE")** ($PRODUCT)" ;;
-                    *) echo "- Changed in App Store Connect: **$(jq -r .attributes.name "$FILE")** ($PRODUCT)" ;;
-                  esac
-                done
-                echo
-                echo "**Merging** accepts these changes into the repo. The apply that follows the merge changes nothing in Xcode Cloud."
-                echo
-                echo "**To undo them in Xcode Cloud instead**, run the \"Xcode Cloud apply\" workflow by hand. It puts back what the files say, and the next sync closes this PR."
-                echo
+                if [ -n "$WORKFLOWS" ]; then
+                  echo "Workflows in App Store Connect no longer match the files in \`XcodeCloud/\`. Someone changed them there by hand, or Xcode Cloud did."
+                  echo
+                  echo "$WORKFLOWS" | while read -r STATUS FILE; do
+                    PRODUCT=$(basename "$(dirname "$FILE")")
+                    case "$STATUS" in
+                      D) echo "- Deleted in App Store Connect: **$(git show "HEAD:$FILE" | jq -r .attributes.name)** ($PRODUCT)" ;;
+                      '??') echo "- New in App Store Connect: **$(jq -r .attributes.name "$FILE")** ($PRODUCT)" ;;
+                      *) echo "- Changed in App Store Connect: **$(jq -r .attributes.name "$FILE")** ($PRODUCT)" ;;
+                    esac
+                  done
+                  echo
+                  echo "**Merging** accepts these changes into the repo. The apply that follows the merge changes nothing in Xcode Cloud."
+                  echo
+                  echo "**To undo them in Xcode Cloud instead**, run the \"Xcode Cloud apply\" workflow by hand. It puts back what the files say, and the next sync closes this PR."
+                  echo
+                fi
+                if [ -n "$DOCS" ]; then
+                  echo "xcflow $(xcflow --version) brings its docs in this repo up to date:"
+                  echo
+                  echo "$DOCS" | while read -r STATUS FILE; do
+                    echo "- \`$FILE\`"
+                  done
+                  echo
+                fi
                 echo "Automated change by the xcflow sync action."
               } > "$BODY"
               cat "$BODY" >> "$GITHUB_STEP_SUMMARY"
@@ -206,8 +225,11 @@ enum Templates {
           - name: Create or update the pull request
             uses: peter-evans/create-pull-request@v8
             with:
-              add-paths: XcodeCloud/**
-              commit-message: "Xcode Cloud: Sync workflows from App Store Connect"
+              add-paths: |
+                XcodeCloud/**
+                .claude/skills/edit-xcode-cloud-workflow/**
+                .claude/rules/xcode-cloud.md
+              commit-message: "Xcode Cloud: Sync workflows from App Store Connect and xcflow's docs"
               title: "Xcode Cloud sync"
               body-path: ${{ runner.temp }}/xcflow-sync.md
               branch: xcflow/sync
@@ -239,6 +261,7 @@ enum Templates {
     - `id` ties the file to an existing workflow. A new workflow has no `id`; it is created on merge and matched by name after that.
     - `xcodeVersion` and `macOsVersion` are version names as Xcode Cloud shows them, e.g. "Xcode 26.6" or "Latest Release". "Latest Release" follows Apple's newest release, so the file doesn't go stale when a new Xcode ships; "Latest Beta or Release" also takes betas. `plan` lists the available names when one is unknown, and rejects a macOS version the chosen Xcode doesn't run on. `null` keeps whatever the workflow has, which is only allowed for existing workflows.
     - Each action's `scheme` must be shared (checked in under `xcshareddata/xcschemes`), since Xcode Cloud only sees shared schemes. `plan` rejects one the project or workspace doesn't share.
+    - A new workflow needs a non-empty `attributes.description`; App Store Connect won't create one without.
     - `attributes` uses App Store Connect's own keys and shapes. Copying from an existing file is the easiest way to get them right.
     - Test destinations name their device and runtime by `deviceTypeIdentifier` and `runtimeIdentifier` only. Xcode Cloud's display labels for them go stale, so xcflow leaves them out and ignores them.
     - In a start condition's `filesAndFoldersRule`, App Store Connect stores an unset matcher `directory` as `""`, while an unset `fileExtension` or `fileName` stays `null`. xcflow treats a `null` directory as `""`, so either works, but `""` matches what `export` writes.
@@ -254,7 +277,7 @@ enum Templates {
 
     ## Changes made in App Store Connect
 
-    Every night, `.github/workflows/xcflow-sync.yml` exports the live workflows. If they differ from the default branch, it opens or updates the "Xcode Cloud sync" PR on the `xcflow/sync` branch, listing each workflow changed, added or deleted in App Store Connect.
+    Every night, `.github/workflows/xcflow-sync.yml` exports the live workflows. If they differ from the default branch, it opens or updates the "Xcode Cloud sync" PR on the `xcflow/sync` branch, listing each workflow changed, added or deleted in App Store Connect. The same PR brings this README, and the Claude Code rule if the repo has it, up to date with the xcflow version the workflows pin, after Dependabot bumps it. The Claude Code skill loads its instructions from the installed xcflow when it starts, so it's always current.
 
     - **Merge it** to accept the changes into the repo. The apply after the merge changes nothing in Xcode Cloud.
     - **To undo the changes instead**, run the "Xcode Cloud apply" workflow by hand. It puts back what the files say, and the next sync closes the PR.
@@ -267,12 +290,19 @@ enum Templates {
 
     """#
 
-    private static let skill = #"""
+    private static let skillStub = #"""
     ---
     name: edit-xcode-cloud-workflow
     description: Use when an Xcode Cloud workflow should change — adding, editing, enabling, renaming or removing one, its start conditions, actions, schemes, Xcode or macOS version.
+    allowed-tools: Bash(xcflow guide skill)
     ---
 
+    !`xcflow guide skill`
+
+    """#
+
+    /// The skill's body, printed by `xcflow guide skill` so it always matches the installed xcflow.
+    static let skillGuide = #"""
     # Edit an Xcode Cloud workflow
 
     Workflows are defined by the JSON files in `XcodeCloud/<bundle id>/`. Read `XcodeCloud/README.md` for the file format. A change reaches Xcode Cloud only through a PR: the PR check posts the plan, and merging applies it. Never change a workflow by hand in App Store Connect; the nightly sync turns that into a PR that someone has to accept or undo.
@@ -286,14 +316,15 @@ enum Templates {
        ```
     2. **Edit the files.**
        - **Change:** edit the file in place and keep its `id`. A rename is a change to `attributes.name`.
-       - **Add:** copy the closest existing file into the product's folder. Remove `id`, set a new `attributes.name`, and change everything product-specific: the `scheme` in each action, and the start conditions. Use version names that other files use; an unknown name makes `plan` fail and list the names Xcode Cloud has.
+       - **Add:** for pull request checks, nightly tests or a TestFlight archive on tags, start from a preset: `xcflow add pr-checks`, `nightly-tests` or `testflight-on-tag` (with `--product`, `--scheme` or `--name` when it asks), then adjust the file. Otherwise copy the closest existing file into the product's folder. Remove `id`, set a new `attributes.name` and a non-empty `attributes.description`, and change everything product-specific: the `scheme` in each action, and the start conditions. Use version names that other files use; "Latest Release" never goes stale. An unknown name makes `plan` fail and list the names Xcode Cloud has.
+       - **TestFlight:** the App Store Connect API can't set post-actions. A workflow that should deliver to TestFlight needs its post-action added in Xcode or App Store Connect once it exists; say so in the PR.
        - **Remove:** delete the file. It deletes the workflow **and its build history**. Confirm that with the developer before deleting, and name the workflow.
        - Check the scheme can do what the action asks. A `TEST` action on a scheme without test targets fails every build.
     3. **Dry run** the plan offline and show the developer the result:
        ```bash
        xcflow plan --dry-run "$SNAPSHOT/XcodeCloud"
        ```
-       It must list exactly the creates, updates and deletes you meant, with no validation errors. Use `apply` instead of `plan` to see the request bodies. The dry run compares against the repo's files, not live Xcode Cloud. `xcflow plan` without `--dry-run` reads the live state; only run it when the developer agrees to calling App Store Connect.
+       It must list exactly the creates, updates and deletes you meant, with no validation errors. Use `apply` instead of `plan` to see the request bodies. The dry run compares against the repo's files, not live Xcode Cloud, and has no live catalog: whether the Xcode and macOS versions run together and whether each test device exists for that Xcode are only checked by the live plan. `xcflow plan` without `--dry-run` reads the live state; only run it when the developer agrees to calling App Store Connect.
     4. **Commit and open the PR** the way this repo does it. Put the dry-run plan in the description. Say that the live plan arrives as a PR comment once the PR is ready for review, because the check skips drafts. Don't predict what that comment will say.
 
     ## Common mistakes
@@ -303,6 +334,7 @@ enum Templates {
     | Copying a file and keeping its `id` | Two files claim the same workflow; plan fails |
     | New file in the wrong bundle-id folder | Workflow created in the wrong app |
     | `xcodeVersion: null` on a new workflow | Plan fails; only existing workflows may keep theirs |
+    | A new workflow with an empty `description` | Plan fails; App Store Connect won't create it |
     | A scheme that's only in your `xcuserdata` | Plan fails; tick Shared for it in Xcode and commit the `.xcscheme` |
     | Deleting to "start fresh" when editing would do | Build history lost |
     | Running `xcflow apply` locally | Changes Xcode Cloud without review; apply only runs from the default branch |

@@ -26,6 +26,9 @@ enum Usage {
       run <workflow> (--branch <name> | --tag <name>) [--clean] [--wait] [--timeout <minutes>] [--product <bundle id> | --all] [--root <folder>]
                                         Start a build. With --wait, also wait for it to finish.
                                         --wait exits 0 when the build succeeded, 1 when it failed, 2 when it couldn't finish, 124 on timeout.
+      docs [--check]                    Rewrite XcodeCloud/README.md, and the Claude Code skill and rule when the repo has them, to match this version.
+                                        The nightly sync runs it. --check only lists what's out of date.
+      guide skill                       Print the edit-xcode-cloud-workflow skill. The skill file in the repo loads it from here.
       get <path> [key=value …]          Print a raw App Store Connect API response.
       --version                         Print the version.
 

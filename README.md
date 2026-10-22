@@ -46,7 +46,7 @@ Xcode Cloud has to be switched on for the app first: create its first workflow i
    - `XcodeCloud/<bundle id>/*.json`: one file per workflow, exported from the products in the project's Xcode Cloud manifest, or from the ones you pass with `--products`, plus a README on the format.
    - `.github/workflows/xcflow-plan.yml`, `xcflow-apply.yml` and `xcflow-sync.yml`, running on `ubuntu-latest` and installing xcflow from `OlafAndreas/xcflow-action`, pinned to a commit.
    - `.github/dependabot.yml`, so Dependabot opens a pull request when a new xcflow is out. The plan check doesn't run on those pull requests, because they can't read the repo's secrets; the bump merges on the strength of xcflow's own release checks, and the nightly sync is the first run of the new version in that repo.
-   - With `--claude`: `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files, and an `xcflow` entry in `.mcp.json`, so it can read Xcode Cloud through xcflow.
+   - With `--claude`: `.claude/skills/edit-xcode-cloud-workflow/` and `.claude/rules/xcode-cloud.md`, so Claude Code changes workflows through the files, and an `xcflow` entry in `.mcp.json`, so it can read Xcode Cloud through xcflow. The skill loads its instructions from the installed xcflow (`xcflow guide skill`), so it always matches the version you run. The nightly sync runs `xcflow docs`, so `XcodeCloud/README.md` and the rule follow the xcflow version the workflows pin.
    - The `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` secrets on the GitHub repo, from the team key. `setup` checks first and skips this step when all three are already set; `--replace-secrets` sets them again.
 
    When it's done, review the new files with `git status`, commit them and open a pull request. The plan check posts what would change in Xcode Cloud, and the repo is ready.
@@ -96,6 +96,7 @@ Only products with a folder in `XcodeCloud/` are managed. Deleting a workflow's 
 | `xcflow build <number or id> [--wait] [--timeout <minutes>]` | Shows a build: its actions, compiler errors and failing tests. With `--wait`, waits for it to finish first. |
 | `xcflow logs <number or id> [--action <name>]` | Downloads a build's logs and prints where they went. |
 | `xcflow run <workflow> (--branch <name> \| --tag <name>) [--clean] [--wait] [--timeout <minutes>]` | Starts a build. With `--wait`, waits for it to finish. |
+| `xcflow docs [--check]` | Rewrites `XcodeCloud/README.md`, and the Claude Code skill and rule when the repo has them, to match this version. The nightly sync runs it. |
 | `xcflow get <path> [key=value …]` | Prints a raw App Store Connect API response. |
 
 `--dry-run <folder>` with `plan`, `apply` or `export` answers from the workflow files in that folder instead of the API, and prints every request it would send. Nothing is sent and no key is needed. Copy `XcodeCloud/` before editing and pass the copy to see exactly what a change would do.

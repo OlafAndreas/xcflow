@@ -23,6 +23,11 @@ case "auth":
     await runOrExit("auth") { try await Auth.run(arguments: Array(arguments.dropFirst())) }
 case "keys":
     exit(KeysCommand.run(arguments: Array(arguments.dropFirst())))
+case "docs":
+    exit(DocsCommand.run(arguments: Array(arguments.dropFirst())))
+case "guide" where arguments.dropFirst() == ["skill"]:
+    print(Templates.skillGuide, terminator: "")
+    exit(0)
 case "add":
     exit(AddCommand.run(arguments: Array(arguments.dropFirst())))
 case "setup":
