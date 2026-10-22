@@ -75,7 +75,7 @@ xcflow keys remove <key id>  # delete a key from the Keychain
 
 ## How it works
 
-- **Pull requests:** `xcflow plan` validates the files and compares them with Xcode Cloud. The PR check posts the result as a comment: what will be created, updated or deleted. It only reads from App Store Connect.
+- **Pull requests:** `xcflow plan` validates the files against the live catalog (Xcode and macOS versions that exist and run together, schemes the project shares) and compares them with Xcode Cloud. The PR check posts the result as a comment: what will be created, updated or deleted. It only reads from App Store Connect.
 - **Merge:** a push to the default branch that changes `XcodeCloud/` runs `xcflow apply`, which makes those changes.
 - **Every night:** `xcflow export` writes the live workflows to the files. If they differ, the sync job opens a pull request. Merge it to accept the change, or run the apply workflow to undo it in Xcode Cloud.
 
@@ -134,7 +134,6 @@ Run with no command, xcflow is an MCP server. `setup` registers it in `.mcp.json
 
 Where xcflow is heading, roughly in order. Contributions are welcome: open an issue to talk an item through before building it, or send a pull request.
 
-- **Validation against the live catalog.** `plan` lists the Xcode and macOS version names when one is unknown. Next: reject a scheme the project doesn't have, and support `"xcodeVersion": "latest"` resolved when applied, so a workflow file doesn't go stale when Apple ships a new Xcode.
 - **Presets.** `xcflow add pr-checks`, `nightly-tests` or `testflight-on-tag` scaffolds a workflow file from the project's schemes, so the second workflow is one command away.
 - **Seeding from CI.** A reusable workflow next to the install action, so a repo gets xcflow from a five-line workflow and a dispatch, and an organization workflow template so it shows on every repo's "New workflow" page.
 - **Smaller onboarding gaps.** `setup` warning on a private repo that Dependabot needs the dependency graph switched on, and a homebrew-core formula once the project qualifies, so `brew install xcflow` works without naming the tap.

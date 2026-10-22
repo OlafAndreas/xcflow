@@ -134,7 +134,8 @@ struct SyncPlan {
     fileprivate var environments: Environments?
 }
 
-private struct Environments {
+/// The live catalog plan checks the files against.
+struct Environments {
     let xcodeVersions: [JSON]
     let macOSVersions: [JSON]
     let repositories: [JSON]
@@ -149,6 +150,15 @@ private struct Environments {
 
     func repositoryID(_ name: String) -> String? {
         Self.id(of: name, in: repositories, attribute: "repositoryName")
+    }
+
+    /// The ids of the macOS versions an Xcode version runs on; nil when the catalog leaves them out, as a dry run does.
+    func macOSIDs(forXcode id: String) -> Set<String>? {
+        let xcode = xcodeVersions.first { $0.id == id }
+        guard let data = (((xcode?["relationships"] as? JSON)?["macOsVersions"] as? JSON)?["data"] as? [JSON]) else {
+            return nil
+        }
+        return Set(data.map(\.id))
     }
 
     private static func id(of name: String, in items: [JSON], attribute: String) -> String? {
@@ -198,7 +208,7 @@ struct WorkflowSync {
         var plan = SyncPlan()
         let products = try await client.products()
         let environments = Environments(
-            xcodeVersions: try await client.getAll("/v1/ciXcodeVersions").data,
+            xcodeVersions: try await client.getAll("/v1/ciXcodeVersions", query: ["include": "macOsVersions", "limit[macOsVersions]": "50"]).data,
             macOSVersions: try await client.getAll("/v1/ciMacOsVersions").data,
             repositories: try await client.getAll("/v1/scmRepositories", query: ["fields[scmRepositories]": "repositoryName"]).data
         )
@@ -209,7 +219,7 @@ struct WorkflowSync {
             do {
                 let product = try await product(bundleID, in: products)
                 let files = try readFiles(in: root.appending(path: bundleID), product: product, errors: &plan.errors)
-                plan.errors += Self.validate(files, environments)
+                plan.errors += Self.validate(files, environments, repo: root.deletingLastPathComponent())
                 managed.append((product, files))
             } catch {
                 plan.errors.append("\(bundleID): \(error.localizedDescription)")
@@ -422,7 +432,8 @@ struct WorkflowSync {
 
     // MARK: - Validation and diffing
 
-    private static func validate(_ files: [WorkflowFile], _ environments: Environments) -> [String] {
+    /// Errors in the files against the live catalog, and against the schemes the repo shares.
+    static func validate(_ files: [WorkflowFile], _ environments: Environments, repo: URL) -> [String] {
         var errors: [String] = []
         for (name, group) in Dictionary(grouping: files, by: { $0.definition.name.lowercased() }) where group.count > 1 {
             errors.append("Several files use the workflow name \"\(name)\": \(group.map(\.path).joined(separator: ", "))")
@@ -436,7 +447,9 @@ struct WorkflowSync {
                 errors.append("\(file.path): a new workflow needs both xcodeVersion and macOsVersion.")
             }
             if let xcodeVersion = definition.xcodeVersion, environments.xcodeID(xcodeVersion) == nil {
-                errors.append("\(file.path): unknown Xcode version \"\(xcodeVersion)\". Available: \(environments.xcodeVersions.compactMap { $0.string("name") }.joined(separator: ", "))")
+                let names = environments.xcodeVersions.compactMap { $0.string("name") }
+                let latest = names.contains("Latest Release") ? " \"Latest Release\" follows Apple's newest release, so the file never goes stale." : ""
+                errors.append("\(file.path): unknown Xcode version \"\(xcodeVersion)\". Available: \(names.joined(separator: ", ")).\(latest)")
             }
             if let macOsVersion = definition.macOsVersion, environments.macOSID(macOsVersion) == nil {
                 errors.append("\(file.path): unknown macOS version \"\(macOsVersion)\". Available: \(environments.macOSVersions.compactMap { $0.string("name") }.joined(separator: ", "))")
@@ -444,8 +457,36 @@ struct WorkflowSync {
             if environments.repositoryID(definition.repository) == nil {
                 errors.append("\(file.path): unknown repository \"\(definition.repository)\".")
             }
+            if let xcode = definition.xcodeVersion, let macOS = definition.macOsVersion,
+               let xcodeID = environments.xcodeID(xcode), let macOSID = environments.macOSID(macOS),
+               let compatible = environments.macOSIDs(forXcode: xcodeID), !compatible.contains(macOSID) {
+                let names = environments.macOSVersions.filter { compatible.contains($0.id) }.compactMap { $0.string("name") }
+                errors.append("\(file.path): \(xcode) doesn't run on \(macOS). With \(xcode), use: \(names.joined(separator: ", ")).")
+            }
+            errors += schemeErrors(in: file, repo: repo)
         }
         return errors.sorted()
+    }
+
+    /// Each action's scheme against the shared schemes of the workflow's container. A container that isn't checked in, such as a generated project, or that isn't a project or workspace, isn't checked.
+    private static func schemeErrors(in file: WorkflowFile, repo: URL) -> [String] {
+        guard let container = file.definition.attributes["containerFilePath"] as? String,
+              FileManager.default.fileExists(atPath: repo.appending(path: container).path(percentEncoded: false)),
+              let shared = Schemes.shared(in: repo.appending(path: container))
+        else {
+            return []
+        }
+        let userOnly = Schemes.userOnly(in: repo.appending(path: container))
+        return (file.definition.attributes["actions"] as? [JSON] ?? []).compactMap { action in
+            guard let scheme = action["scheme"] as? String, !shared.contains(scheme) else {
+                return nil
+            }
+            let name = action["name"] as? String ?? "?"
+            if userOnly.contains(scheme) {
+                return "\(file.path): action \"\(name)\" uses the scheme \"\(scheme)\", which isn't shared in \(container), so Xcode Cloud can't see it. Tick Shared for it in Xcode (Product → Scheme → Manage Schemes…) and commit its .xcscheme file."
+            }
+            return "\(file.path): action \"\(name)\" uses the scheme \"\(scheme)\", which \(container) doesn't share. Shared schemes: \(shared.isEmpty ? "none" : shared.joined(separator: ", "))."
+        }
     }
 
     static func changedAttributes(from current: JSON, to desired: JSON) -> [String] {
