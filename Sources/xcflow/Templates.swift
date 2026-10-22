@@ -248,7 +248,7 @@ enum Templates {
 
     ## Changing a workflow
 
-    1. Edit, add or delete a file. In Claude Code, the `edit-xcode-cloud-workflow` skill (added by `xcflow setup --claude`) does this and opens the PR.
+    1. Edit, add or delete a file. `xcflow add pr-checks`, `nightly-tests` or `testflight-on-tag` writes a new one from a preset. In Claude Code, the `edit-xcode-cloud-workflow` skill (added by `xcflow setup --claude`) does this and opens the PR.
     2. The PR check (`.github/workflows/xcflow-plan.yml`) posts what will be created, updated or deleted, and fails if a file is invalid. It doesn't run on draft PRs.
     3. When the PR is merged, `.github/workflows/xcflow-apply.yml` applies the change.
 

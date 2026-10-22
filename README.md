@@ -88,6 +88,7 @@ Only products with a folder in `XcodeCloud/` are managed. Deleting a workflow's 
 | `xcflow setup` | Adds the files above to the current repo. |
 | `xcflow auth --key-id <id> --p8 <path> [--issuer-id <id>]` | Checks a key against App Store Connect and stores it in the Keychain. |
 | `xcflow keys [use <id> \| remove <id>]` | Lists the stored keys, pins this repo to one, or removes one. |
+| `xcflow add <pr-checks \| nightly-tests \| testflight-on-tag>` | Writes a new workflow file from a preset: tests on every pull request, tests every night at 03:00, or an App Store archive for each `v` tag. It copies the repository, project, versions and platform from a workflow file already in the folder, and picks the scheme the project shares. `--product`, `--scheme` and `--name` choose when there's more than one option. The API can't add a TestFlight post-action, so add that in Xcode once the workflow exists. |
 | `xcflow plan` | Validates `XcodeCloud/` and prints what would change. Reads only. |
 | `xcflow apply` | Makes those changes. Meant for CI on the default branch. |
 | `xcflow export [<bundle id> …]` | Writes the live workflows to `XcodeCloud/`. Without ids: the products already there, or the ones in the project's Xcode Cloud manifest. |
@@ -134,7 +135,6 @@ Run with no command, xcflow is an MCP server. `setup` registers it in `.mcp.json
 
 Where xcflow is heading, roughly in order. Contributions are welcome: open an issue to talk an item through before building it, or send a pull request.
 
-- **Presets.** `xcflow add pr-checks`, `nightly-tests` or `testflight-on-tag` scaffolds a workflow file from the project's schemes, so the second workflow is one command away.
 - **Seeding from CI.** A reusable workflow next to the install action, so a repo gets xcflow from a five-line workflow and a dispatch, and an organization workflow template so it shows on every repo's "New workflow" page.
 - **Smaller onboarding gaps.** `setup` warning on a private repo that Dependabot needs the dependency graph switched on, and a homebrew-core formula once the project qualifies, so `brew install xcflow` works without naming the tap.
 
