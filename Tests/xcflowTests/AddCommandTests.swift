@@ -43,6 +43,7 @@ struct AddCommandTests {
         #expect(definition.macOsVersion == "macOS Tahoe 26.4")
         #expect(definition.attributes["containerFilePath"] as? String == "Example.xcodeproj")
         #expect(definition.attributes["clean"] as? Bool == false)
+        #expect(definition.attributes["description"] as? String == "Runs the tests on every pull request.")
         let condition = try #require(definition.attributes["pullRequestStartCondition"] as? JSON)
         #expect((condition["source"] as? JSON)?["isAllMatch"] as? Bool == true)
         let action = try #require((definition.attributes["actions"] as? [JSON])?.first)

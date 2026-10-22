@@ -120,4 +120,14 @@ struct CatalogValidationTests {
             "XcodeCloud/com.example.app/nightly-tests.json: unknown Xcode version \"Xcode 25\". Available: Latest Release, Xcode 26.6. \"Latest Release\" follows Apple's newest release, so the file never goes stale."
         ])
     }
+
+    @Test func aNewWorkflowNeedsADescription() throws {
+        let existing = try file()
+        var attributes = existing.definition.attributes
+        attributes["description"] = ""
+        let new = WorkflowFile(path: existing.path, product: product, definition: WorkflowDefinition(id: nil, repository: "example-app", xcodeVersion: "Latest Release", macOsVersion: "Latest Release", attributes: attributes))
+        #expect(WorkflowSync.validate([new], environments(), repo: try repo()) == ["XcodeCloud/com.example.app/nightly-tests.json: a new workflow needs a description; App Store Connect refuses to create one without."])
+        let kept = WorkflowFile(path: existing.path, product: product, definition: WorkflowDefinition(id: Fixtures.nightlyID, repository: "example-app", xcodeVersion: "Latest Release", macOsVersion: "Latest Release", attributes: attributes))
+        #expect(WorkflowSync.validate([kept], environments(), repo: try repo()).isEmpty)
+    }
 }

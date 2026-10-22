@@ -9,6 +9,15 @@ enum AddCommand {
         case nightlyTests = "nightly-tests"
         case testflightOnTag = "testflight-on-tag"
 
+        /// App Store Connect refuses to create a workflow with an empty description.
+        var description: String {
+            switch self {
+            case .prChecks: "Runs the tests on every pull request."
+            case .nightlyTests: "Runs the tests every night."
+            case .testflightOnTag: "Archives for App Store Connect when a version tag is pushed."
+            }
+        }
+
         var defaultName: String {
             switch self {
             case .prChecks: "PR checks"
@@ -77,7 +86,7 @@ enum AddCommand {
 
         var attributes: JSON = [
             "name": name,
-            "description": "",
+            "description": preset.description,
             "containerFilePath": container,
             "isEnabled": true,
             "isLockedForEditing": false,

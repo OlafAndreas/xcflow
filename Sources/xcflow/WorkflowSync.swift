@@ -446,6 +446,9 @@ struct WorkflowSync {
             if definition.id == nil && (definition.xcodeVersion == nil || definition.macOsVersion == nil) {
                 errors.append("\(file.path): a new workflow needs both xcodeVersion and macOsVersion.")
             }
+            if definition.id == nil && (definition.attributes["description"] as? String ?? "").isEmpty {
+                errors.append("\(file.path): a new workflow needs a description; App Store Connect refuses to create one without.")
+            }
             if let xcodeVersion = definition.xcodeVersion, environments.xcodeID(xcodeVersion) == nil {
                 let names = environments.xcodeVersions.compactMap { $0.string("name") }
                 let latest = names.contains("Latest Release") ? " \"Latest Release\" follows Apple's newest release, so the file never goes stale." : ""
