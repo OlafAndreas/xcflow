@@ -225,6 +225,7 @@ enum AddCommand {
         } else if platform == "IOS" {
             configuration = [
                 "kind": "USE_SCHEME_SETTINGS",
+                "testPlanName": "",
                 "testDestinations": [[
                     "kind": "SIMULATOR",
                     "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
