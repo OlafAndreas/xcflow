@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 import PackageDescription
 
 let package = Package(
@@ -7,7 +7,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.1"),
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
-        .package(url: "https://github.com/OlafAndreas/swift-mediator.git", from: "0.1.2")
+        .package(url: "https://github.com/OlafAndreas/swift-mediator.git", from: "0.2.0", traits: [])
     ],
     targets: [
         .executableTarget(

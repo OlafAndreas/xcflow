@@ -16,15 +16,15 @@ extension CannedAPISuites {
 
         private let everything = Builds { client in try await client.products() }
 
-        @Test func theHandlerIsDiscovered() throws {
-            let mediator = try Mediator()
+        @Test func theHandlerIsRegistered() throws {
+            let mediator = try Mediator(discovery: false, configure: Mediator.registerHandlers)
             #expect(mediator.handlerType(for: ListBuilds.self) == ListBuildsHandler.self)
         }
 
         @Test func theHandlerUsesTheResolvedClient() async throws {
             CannedAPI.reset(Self.products)
             SimpleResolver.shared.register(AppStoreConnectClient.self, instance: try CannedAPI.client())
-            let text = try await Mediator().send(ListBuilds(builds: everything, workflow: nil, branch: nil, limit: 5))
+            let text = try await Mediator(discovery: false, configure: Mediator.registerHandlers).send(ListBuilds(builds: everything, workflow: nil, branch: nil, limit: 5))
             #expect(text.hasPrefix("#12 "))
         }
 
@@ -36,7 +36,7 @@ extension CannedAPISuites {
 
         @Test func withoutAClientTheResolverSaysWhatIsMissing() async throws {
             await #expect(throws: ResolverError.self) {
-                try await Mediator().send(ListBuilds(builds: everything, workflow: nil, branch: nil, limit: 5))
+                try await Mediator(discovery: false, configure: Mediator.registerHandlers).send(ListBuilds(builds: everything, workflow: nil, branch: nil, limit: 5))
             }
         }
 

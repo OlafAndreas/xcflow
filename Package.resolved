@@ -1,5 +1,5 @@
 {
-  "originHash" : "a4c80ec190089ffd8e7a13e889559a7a5868f8299ddadd4fbd0706f29e213579",
+  "originHash" : "bda1b142df8202c1a870c44c313d46d20bb422983e655e12f501a0a441402bee",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/OlafAndreas/swift-discovery.git",
       "state" : {
-        "revision" : "a6c22c04d2927345bc6601c64f997f52989c33f4",
-        "version" : "0.2.0"
+        "revision" : "7091dc7c524d70db8b272b9be49281d306a46015",
+        "version" : "0.3.0"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/OlafAndreas/swift-mediator.git",
       "state" : {
-        "revision" : "8ab6bd37139feb2550d0de861e7ee601c71a10ab",
-        "version" : "0.1.2"
+        "revision" : "d252325ef53c324bc520d219d7897db85b0b98e9",
+        "version" : "0.2.0"
       }
     },
     {
