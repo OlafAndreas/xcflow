@@ -130,4 +130,37 @@ struct CatalogValidationTests {
         let kept = WorkflowFile(path: existing.path, product: product, definition: WorkflowDefinition(id: Fixtures.nightlyID, repository: "example-app", xcodeVersion: "Latest Release", macOsVersion: "Latest Release", attributes: attributes))
         #expect(WorkflowSync.validate([kept], environments(), repo: try repo()).isEmpty)
     }
+
+    private func catalog() -> Environments {
+        let iPhone: JSON = [
+            "kind": "SIMULATOR", "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17", "deviceTypeName": "iPhone 17",
+            "availableRuntimes": [
+                ["runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-0", "runtimeName": "iOS 27.0"],
+                ["runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-1", "runtimeName": "iOS 27.1"],
+                ["runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-17-5", "runtimeName": "iOS 17.5"],
+            ],
+        ]
+        var xcode = version("ciXcodeVersions", "Latest Release")
+        xcode["attributes"] = ["name": "Latest Release", "testDestinations": [iPhone]] as JSON
+        return Environments(xcodeVersions: [xcode], macOSVersions: [version("ciMacOsVersions", "Latest Release")], repositories: [["type": "scmRepositories", "id": "repo-1", "attributes": ["repositoryName": "example-app"]]])
+    }
+
+    @Test func fillsInTheDeviceAndRuntimeNamesAppStoreConnectRequires() throws {
+        let attributes = try file().definition.attributes
+        let labeled = catalog().withDisplayLabels(attributes, xcode: "Latest Release")
+        let destination = try #require((((labeled["actions"] as? [JSON])?.first?["testConfiguration"] as? JSON)?["testDestinations"] as? [JSON])?.first)
+        #expect(destination["deviceTypeName"] as? String == "iPhone 17")
+        #expect(destination["runtimeName"] as? String == "Latest from Selected Xcode (iOS 27.1)")
+    }
+
+    @Test func aTestDeviceTheXcodeVersionDoesntOfferIsRejected() throws {
+        let known = try file()
+        #expect(WorkflowSync.validate([known], catalog(), repo: try repo()).isEmpty)
+        var attributes = known.definition.attributes
+        var action = (attributes["actions"] as! [JSON])[0]
+        action["testConfiguration"] = ["kind": "USE_SCHEME_SETTINGS", "testDestinations": [["kind": "SIMULATOR", "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-6", "runtimeIdentifier": "default"]]] as JSON
+        attributes["actions"] = [action]
+        let unknown = WorkflowFile(path: known.path, product: product, definition: WorkflowDefinition(id: Fixtures.nightlyID, repository: "example-app", xcodeVersion: "Latest Release", macOsVersion: "Latest Release", attributes: attributes))
+        #expect(WorkflowSync.validate([unknown], catalog(), repo: try repo()) == ["XcodeCloud/com.example.app/nightly-tests.json: Latest Release has no test device com.apple.CoreSimulator.SimDeviceType.iPhone-6."])
+    }
 }
