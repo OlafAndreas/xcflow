@@ -237,7 +237,8 @@ enum Templates {
     ```
 
     - `id` ties the file to an existing workflow. A new workflow has no `id`; it is created on merge and matched by name after that.
-    - `xcodeVersion` and `macOsVersion` are version names as Xcode Cloud shows them, e.g. "Xcode 26.6" or "Latest Release". `plan` lists the available names when one is unknown. `null` keeps whatever the workflow has, which is only allowed for existing workflows.
+    - `xcodeVersion` and `macOsVersion` are version names as Xcode Cloud shows them, e.g. "Xcode 26.6" or "Latest Release". "Latest Release" follows Apple's newest release, so the file doesn't go stale when a new Xcode ships; "Latest Beta or Release" also takes betas. `plan` lists the available names when one is unknown, and rejects a macOS version the chosen Xcode doesn't run on. `null` keeps whatever the workflow has, which is only allowed for existing workflows.
+    - Each action's `scheme` must be shared (checked in under `xcshareddata/xcschemes`), since Xcode Cloud only sees shared schemes. `plan` rejects one the project or workspace doesn't share.
     - `attributes` uses App Store Connect's own keys and shapes. Copying from an existing file is the easiest way to get them right.
     - Test destinations name their device and runtime by `deviceTypeIdentifier` and `runtimeIdentifier` only. Xcode Cloud's display labels for them go stale, so xcflow leaves them out and ignores them.
     - In a start condition's `filesAndFoldersRule`, App Store Connect stores an unset matcher `directory` as `""`, while an unset `fileExtension` or `fileName` stays `null`. xcflow treats a `null` directory as `""`, so either works, but `""` matches what `export` writes.
@@ -302,6 +303,7 @@ enum Templates {
     | Copying a file and keeping its `id` | Two files claim the same workflow; plan fails |
     | New file in the wrong bundle-id folder | Workflow created in the wrong app |
     | `xcodeVersion: null` on a new workflow | Plan fails; only existing workflows may keep theirs |
+    | A scheme that's only in your `xcuserdata` | Plan fails; tick Shared for it in Xcode and commit the `.xcscheme` |
     | Deleting to "start fresh" when editing would do | Build history lost |
     | Running `xcflow apply` locally | Changes Xcode Cloud without review; apply only runs from the default branch |
 
