@@ -161,6 +161,49 @@ struct Environments {
         return Set(data.map(\.id))
     }
 
+    /// The test destinations an Xcode version offers; nil when the catalog leaves them out, as a dry run does.
+    func testDestinations(forXcode name: String) -> [JSON]? {
+        xcodeVersions.first { $0.id == xcodeID(name) }?.attributes["testDestinations"] as? [JSON]
+    }
+
+    /// The attributes with each test destination's device and runtime names filled in from the Xcode version's catalog. App Store Connect requires the names when it receives actions, while workflow files leave them out.
+    func withDisplayLabels(_ attributes: JSON, xcode: String?) -> JSON {
+        guard let xcode, let catalog = testDestinations(forXcode: xcode), let actions = attributes["actions"] as? [JSON] else {
+            return attributes
+        }
+        var attributes = attributes
+        attributes["actions"] = actions.map { action -> JSON in
+            guard var configuration = action["testConfiguration"] as? JSON,
+                  let destinations = configuration["testDestinations"] as? [JSON]
+            else {
+                return action
+            }
+            configuration["testDestinations"] = destinations.map { destination -> JSON in
+                guard let device = catalog.first(where: { ($0["deviceTypeIdentifier"] as? String) == (destination["deviceTypeIdentifier"] as? String) }) else {
+                    return destination
+                }
+                var destination = destination
+                destination["deviceTypeName"] = device["deviceTypeName"]
+                destination["runtimeName"] = Self.runtimeName(destination["runtimeIdentifier"] as? String, in: device)
+                return destination
+            }
+            var action = action
+            action["testConfiguration"] = configuration
+            return action
+        }
+        return attributes
+    }
+
+    /// `default` is "Latest from Selected Xcode", named after the newest runtime the device has.
+    private static func runtimeName(_ identifier: String?, in device: JSON) -> String? {
+        let runtimes = device["availableRuntimes"] as? [JSON] ?? []
+        if identifier == "default" {
+            let newest = runtimes.compactMap { $0["runtimeName"] as? String }.max { $0.compare($1, options: .numeric) == .orderedAscending }
+            return newest.map { "Latest from Selected Xcode (\($0))" } ?? "Latest from Selected Xcode"
+        }
+        return runtimes.first { ($0["runtimeIdentifier"] as? String) == identifier }?["runtimeName"] as? String
+    }
+
     private static func id(of name: String, in items: [JSON], attribute: String) -> String? {
         items.first { $0.string(attribute)?.caseInsensitiveCompare(name) == .orderedSame }?.id
     }
@@ -287,13 +330,14 @@ struct WorkflowSync {
                     "macOsVersion": ["data": ["type": "ciMacOsVersions", "id": definition.macOsVersion.flatMap(environments.macOSID) ?? ""]]
                 ]
                 let created = try await client.post("/v1/ciWorkflows", body: [
-                    "data": ["type": "ciWorkflows", "attributes": definition.attributes.filter { !($0.value is NSNull) }, "relationships": relationships] as JSON
+                    "data": ["type": "ciWorkflows", "attributes": environments.withDisplayLabels(definition.attributes, xcode: definition.xcodeVersion).filter { !($0.value is NSNull) }, "relationships": relationships] as JSON
                 ])
                 report("- Created **\(definition.name)** in \(file.product.label), id `\((created["data"] as? JSON)?.id ?? "?")`")
             case .update(let file, let current, let attributes, let environment):
                 var data: JSON = ["type": "ciWorkflows", "id": current.id]
                 if !attributes.isEmpty {
-                    data["attributes"] = Dictionary(uniqueKeysWithValues: attributes.map { ($0, file.definition.attributes[$0] ?? NSNull()) })
+                    let labeled = environments.withDisplayLabels(file.definition.attributes, xcode: file.definition.xcodeVersion ?? current.definition.xcodeVersion)
+                    data["attributes"] = Dictionary(uniqueKeysWithValues: attributes.map { ($0, labeled[$0] ?? NSNull()) })
                 }
                 var relationships: JSON = [:]
                 if environment.contains("xcodeVersion") {
@@ -446,6 +490,9 @@ struct WorkflowSync {
             if definition.id == nil && (definition.xcodeVersion == nil || definition.macOsVersion == nil) {
                 errors.append("\(file.path): a new workflow needs both xcodeVersion and macOsVersion.")
             }
+            if definition.id == nil && (definition.attributes["description"] as? String ?? "").isEmpty {
+                errors.append("\(file.path): a new workflow needs a description; App Store Connect refuses to create one without.")
+            }
             if let xcodeVersion = definition.xcodeVersion, environments.xcodeID(xcodeVersion) == nil {
                 let names = environments.xcodeVersions.compactMap { $0.string("name") }
                 let latest = names.contains("Latest Release") ? " \"Latest Release\" follows Apple's newest release, so the file never goes stale." : ""
@@ -462,6 +509,13 @@ struct WorkflowSync {
                let compatible = environments.macOSIDs(forXcode: xcodeID), !compatible.contains(macOSID) {
                 let names = environments.macOSVersions.filter { compatible.contains($0.id) }.compactMap { $0.string("name") }
                 errors.append("\(file.path): \(xcode) doesn't run on \(macOS). With \(xcode), use: \(names.joined(separator: ", ")).")
+            }
+            if let xcode = definition.xcodeVersion, let catalog = environments.testDestinations(forXcode: xcode) {
+                let offered = Set(catalog.compactMap { $0["deviceTypeIdentifier"] as? String })
+                let devices = (definition.attributes["actions"] as? [JSON] ?? []).flatMap { (($0["testConfiguration"] as? JSON)?["testDestinations"] as? [JSON]) ?? [] }
+                for device in Set(devices.compactMap { $0["deviceTypeIdentifier"] as? String }).subtracting(offered).sorted() {
+                    errors.append("\(file.path): \(xcode) has no test device \(device).")
+                }
             }
             errors += schemeErrors(in: file, repo: repo)
         }
